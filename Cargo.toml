@@ -1,0 +1,70 @@
+[package]
+name = "taskbar-focus"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "A tiny Pomodoro/focus timer that lives in the Windows tray and toggles Do Not Disturb"
+license = "MIT"
+repository = "https://github.com/yoelrosenthal/taskbar-focus"
+readme = "README.md"
+keywords = ["pomodoro", "focus", "windows", "tray", "timer"]
+categories = ["command-line-utilities"]
+
+# Everything `build.rs` needs must ship in the package, or `cargo install`
+# produces a binary with no icon and no manifest. Listing the contents
+# explicitly also keeps the published crate small.
+include = [
+    "src/**/*.rs",
+    "build.rs",
+    "taskbar-focus.manifest",
+    "focus-app-icons/icon.ico",
+    "focus-app-icons/icon-256.png",
+    "README.md",
+    "LICENSE",
+]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# Embeds version info and the application manifest. See build.rs for why that
+# matters beyond cosmetics.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+    # --- WinRT (documented Focus/DND *read* API) ---
+    "Foundation",
+    "UI_Shell",
+    # --- Win32 ---
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Power",
+    "Win32_System_Registry",
+    "Win32_System_Services",
+    "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Application manifest for taskbar-focus.
+
+  This file is deliberately checked in and readable: it is a machine-readable
+  statement of what the program does and does not ask the operating system for,
+  which is useful both to Windows and to anyone reviewing the binary.
+
+  Notably it requests `asInvoker` - the app never asks for elevation. It does
+  restart the per-user notification service (see src/os/dnd/service.rs), which
+  a normal user is allowed to do for their own service instance.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+
+  <assemblyIdentity
+      type="win32"
+      name="taskbar-focus"
+      version="0.1.0.0"
+      processorArchitecture="*"/>
+
+  <description>Focus/Pomodoro timer for the Windows notification area</description>
+
+  <!-- Run with exactly the rights of whoever launched us. Never elevate. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+    </application>
+  </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+      <!--
+        DPI awareness is deliberately NOT declared.
+
+        The settings window lays its controls out in fixed pixels designed at
+        96 DPI. Claiming awareness would make Windows stop scaling us, and the
+        controls would render too small on a high-DPI display. Staying
+        unaware lets Windows scale the window correctly (slightly soft, but
+        right). The tray icon is rasterised at the size the shell asks for, so
+        it stays crisp either way.
+      -->
+    </windowsSettings>
+  </application>
+
+  <!-- Themed common controls, so the settings window looks like Windows. -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+          type="win32"
+          name="Microsoft.Windows.Common-Controls"
+          version="6.0.0.0"
+          processorArchitecture="*"
+          publicKeyToken="6595b64144ccf1df"
+          language="*"/>
+    </dependentAssembly>
+  </dependency>
+
+</assembly>
