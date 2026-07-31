@@ -62,6 +62,13 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
+# docs.rs builds on Linux by default, where the `windows` crate is not a
+# dependency and nothing here compiles. Without this the crate publishes fine
+# but its documentation build fails permanently.
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = ["x86_64-pc-windows-msvc"]
+
 [profile.release]
 opt-level = "z"
 lto = true
