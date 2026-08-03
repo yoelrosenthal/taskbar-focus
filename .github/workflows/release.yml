@@ -85,8 +85,9 @@ jobs:
         run: |
           Write-Host "::notice::Repository is private, so no build provenance attestation was created. Make it public to enable them."
 
-      # Written onto main rather than onto the detached tag checkout, so the
-      # push is always a fast-forward even if main has moved on since the tag.
+      # Written onto main rather than onto the detached tag checkout. Rebuilt
+      # from a fresh origin/main on every attempt, because anything else landing
+      # on main between the fetch and the push rejects it as non-fast-forward.
       - name: Update the Scoop manifest on main
         shell: pwsh
         env:
@@ -95,26 +96,42 @@ jobs:
           $version = $env:TAG -replace '^v',''
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git checkout -B main origin/main
 
-          $path = 'bucket\taskbar-focus.json'
-          $m = Get-Content $path -Raw | ConvertFrom-Json
-          $m.version = $version
-          $m.architecture.'64bit'.url =
-            "https://github.com/${{ github.repository }}/releases/download/$env:TAG/taskbar-focus.exe#/taskbar-focus.exe"
-          $m.architecture.'64bit'.hash = $env:HASH
-          $m | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding utf8
-          Copy-Item $path dist\
+          $done = $false
+          foreach ($attempt in 1..5) {
+            git fetch origin main
+            git checkout -B main origin/main
+            git reset --hard origin/main
 
-          git add $path
-          if (git diff --cached --quiet) {
-            Write-Host "manifest unchanged"
-          } else {
+            $path = 'bucket\taskbar-focus.json'
+            $m = Get-Content $path -Raw | ConvertFrom-Json
+            $m.version = $version
+            $m.architecture.'64bit'.url =
+              "https://github.com/${{ github.repository }}/releases/download/$env:TAG/taskbar-focus.exe#/taskbar-focus.exe"
+            $m.architecture.'64bit'.hash = $env:HASH
+            $m | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding utf8
+            Copy-Item $path dist\ -Force
+
+            git add $path
+            if (git diff --cached --quiet) {
+              Write-Host "manifest already up to date on main"
+              $done = $true
+              break
+            }
+
             git commit -m "scoop: $env:TAG"
             git push origin main
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "manifest updated to $version / $env:HASH"
+              $done = $true
+              break
+            }
+            Write-Host "::notice::main moved under us; refetching and retrying ($attempt of 5)."
           }
-          Write-Host "manifest updated to $version / $env:HASH"
+
+          if (-not $done) {
+            throw "could not push the Scoop manifest to main after 5 attempts"
+          }
 
           # Back to the tag, so the later steps - crates.io above all - see the
           # source that was actually tagged rather than whatever main holds now.

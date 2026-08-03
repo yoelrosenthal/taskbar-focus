@@ -18,6 +18,18 @@ added=""
 fixed=""
 changed=""
 
+# Collected to a file first so a failing `git log` is fatal. Reading it from a
+# process substitution hides the exit status, and the loop then sees no input -
+# indistinguishable from a release with no commits, which would quietly publish
+# a changelog claiming nothing changed.
+subjects=$(mktemp)
+trap 'rm -f "$subjects"' EXIT
+
+if ! git log --no-merges --format='%s' "$range" >"$subjects"; then
+  echo "changelog-section.sh: git log failed for range '$range'" >&2
+  exit 1
+fi
+
 while IFS= read -r subject; do
   [ -n "$subject" ] || continue
   case "$subject" in
@@ -26,7 +38,7 @@ while IFS= read -r subject; do
     fix:*|"fix("*) fixed+="- ${subject#*: }"$'\n' ;;
     *) changed+="- $subject"$'\n' ;;
   esac
-done < <(git log --no-merges --format='%s' "$range")
+done <"$subjects"
 
 printf '## [%s] - %s\n' "$version" "$date"
 

@@ -63,7 +63,21 @@ jobs:
           LEVEL: ${{ steps.level.outputs.level }}
         run: |
           current=$(grep -m1 -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
+
+          # A previous run that bumped and tagged but failed to publish leaves
+          # main's tip tagged with its own version. Re-running the whole
+          # workflow must retry that release, not bump past it and strand it.
+          if git rev-parse -q --verify "refs/tags/v$current" >/dev/null \
+            && [ "$(git rev-parse "refs/tags/v$current^{commit}")" = "$(git rev-parse HEAD)" ]; then
+            echo "resume=true" >> "$GITHUB_OUTPUT"
+            echo "current=$current" >> "$GITHUB_OUTPUT"
+            echo "next=$current" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$current is already tagged at this commit; retrying its release instead of bumping again."
+            exit 0
+          fi
+
           next=$(bash .github/scripts/next-version.sh "$current" "$LEVEL")
+          echo "resume=false" >> "$GITHUB_OUTPUT"
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "next=$next" >> "$GITHUB_OUTPUT"
 
@@ -73,6 +87,7 @@ jobs:
           fi
 
       - name: Bump Cargo.toml and Cargo.lock
+        if: steps.version.outputs.resume != 'true'
         env:
           CURRENT: ${{ steps.version.outputs.current }}
           NEXT: ${{ steps.version.outputs.next }}
@@ -88,6 +103,7 @@ jobs:
             || { echo "::error::Cargo.lock was not updated to $NEXT"; exit 1; }
 
       - name: Write the changelog section
+        if: steps.version.outputs.resume != 'true'
         env:
           NEXT: ${{ steps.version.outputs.next }}
         run: |
@@ -114,6 +130,7 @@ jobs:
           head -30 CHANGELOG.md
 
       - name: Commit and tag
+        if: steps.version.outputs.resume != 'true'
         env:
           NEXT: ${{ steps.version.outputs.next }}
         run: |
@@ -122,8 +139,11 @@ jobs:
           git add Cargo.toml Cargo.lock CHANGELOG.md
           git commit -m "Release $NEXT"
           git tag -a "v$NEXT" -m "taskbar-focus v$NEXT"
-          git push origin HEAD:main
-          git push origin "v$NEXT"
+
+          # --atomic so the branch and the tag land together. As two pushes,
+          # a failure between them leaves main bumped with no tag to release,
+          # which the next run cannot tell from a fresh bump.
+          git push --atomic origin HEAD:main "v$NEXT"
 
       - name: Say so on the pull request
         env:
