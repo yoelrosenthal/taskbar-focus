@@ -102,12 +102,6 @@ pub struct App {
     /// The standalone muted mark beside the clock, shown only while muted.
     mute_tray: Tray,
     mute_icon: Option<OwnedIcon>,
-    /// Application icon wearing the mark, built the first time it is needed
-    /// and kept for as long as a window might still be drawing it.
-    marked_app_icon: Option<OwnedIcon>,
-    /// What the settings window's icon was last set from, so it is not pushed
-    /// again on every tick.
-    window_icon_marked: Option<bool>,
 }
 
 /// Entry point for the UI. Blocks until the user exits.
@@ -184,8 +178,6 @@ pub fn run(
             settings_hwnd: None,
             mute_tray: Tray::new(hwnd, MUTE_TRAY_ID, WM_TRAY),
             mute_icon: None,
-            marked_app_icon: None,
-            window_icon_marked: None,
         });
 
         app.register_hotkeys();
@@ -347,7 +339,6 @@ impl App {
         }
 
         self.sync_mute_tray(muted);
-        self.sync_window_icon(muted);
 
         if let Some(s) = self.settings_hwnd {
             crate::ui::settings::refresh_status(s);
@@ -378,45 +369,6 @@ impl App {
                 .set(icon.handle(), "Notifications are muted - taskbar-focus");
             self.mute_icon = Some(icon);
         }
-    }
-
-    /// Put the muted mark on the application icon, or take it off again.
-    ///
-    /// The settings window is the only one that shows an application icon: the
-    /// main window is a message-only tool window and the compact window has no
-    /// caption and stays out of the taskbar by design.
-    fn sync_window_icon(&mut self, muted: bool) {
-        let want = muted && self.orch.config.dnd.mute_app_icon;
-        let Some(hwnd) = self.settings_hwnd else {
-            self.window_icon_marked = None;
-            return;
-        };
-        if self.window_icon_marked == Some(want) {
-            return;
-        }
-
-        let icon = if want {
-            if self.marked_app_icon.is_none() {
-                self.marked_app_icon = icon::app_icon_with_mute_mark(32);
-            }
-            self.marked_app_icon
-                .as_ref()
-                .map(|i| i.handle())
-                .unwrap_or_else(shared_icon)
-        } else {
-            shared_icon()
-        };
-        unsafe {
-            for which in [ICON_SMALL, ICON_BIG] {
-                SendMessageW(
-                    hwnd,
-                    WM_SETICON,
-                    Some(WPARAM(which as usize)),
-                    Some(LPARAM(icon.0 as isize)),
-                );
-            }
-        }
-        self.window_icon_marked = Some(want);
     }
 
     fn apply_events(&mut self, events: Vec<UiEvent>) {
@@ -640,7 +592,6 @@ impl App {
             return;
         }
         self.settings_hwnd = crate::ui::settings::open(self.hwnd, self as *mut App);
-        self.window_icon_marked = None;
         self.refresh();
     }
 

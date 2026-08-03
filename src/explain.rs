@@ -121,10 +121,8 @@ pub fn report() -> String {
     let on_off = |enabled| if enabled { "ON" } else { "OFF" };
     s.push_str(&format!(
         "MUTED INDICATOR\n  \
-         Bell on the application icon:     {}\n  \
          Separate bell beside the clock:   {}\n  \
          Bell in the compact timer window: {}\n",
-        on_off(cfg.dnd.mute_app_icon),
         on_off(cfg.dnd.mute_tray_icon),
         on_off(cfg.dnd.mute_window)
     ));
@@ -140,7 +138,7 @@ pub fn report() -> String {
              pixels it can show progress or a bell, not both.\n\n",
         );
     } else {
-        s.push_str("  All three are off, so no state is read at all for this.\n\n");
+        s.push_str("  Both are off, so no state is read at all for this.\n\n");
     }
 
     s.push_str(

@@ -43,7 +43,6 @@ const ID_RESTORE_SESSION: usize = 114;
 const ID_WAKE: usize = 115;
 
 const ID_DND: usize = 120;
-const ID_MUTE_APP: usize = 121;
 const ID_MUTE_TRAY: usize = 122;
 const ID_MUTE_WINDOW: usize = 123;
 const ID_MINI: usize = 131;
@@ -649,17 +648,6 @@ unsafe fn build(hwnd: HWND, st: &State, cfg: &Config) {
         hwnd,
         &mut right,
         st,
-        "Show a muted bell on the app icon",
-        ID_MUTE_APP,
-        cfg.dnd.mute_app_icon,
-        "Puts the crossed-out bell on the application icon - the one in this \
-         window's title bar and on its taskbar button - whenever notifications \
-         are muted, including when you switched Do Not Disturb on yourself.",
-    );
-    check(
-        hwnd,
-        &mut right,
-        st,
         "Add a separate bell beside the clock",
         ID_MUTE_TRAY,
         cfg.dnd.mute_tray_icon,
@@ -975,7 +963,6 @@ unsafe fn collect(hwnd: HWND, st: &mut State, save_as_new: bool) -> Result<Confi
     };
 
     cfg.dnd.enabled = checked(hwnd, ID_DND);
-    cfg.dnd.mute_app_icon = checked(hwnd, ID_MUTE_APP);
     cfg.dnd.mute_tray_icon = checked(hwnd, ID_MUTE_TRAY);
     cfg.dnd.mute_window = checked(hwnd, ID_MUTE_WINDOW);
     cfg.display.mini_window = checked(hwnd, ID_MINI);
@@ -1046,7 +1033,6 @@ unsafe fn restore_defaults(hwnd: HWND, st: &mut State) {
         (ID_STRICT, d.behavior.strict_focus),
         (ID_RESTORE_SESSION, d.behavior.restore_session_on_restart),
         (ID_DND, d.dnd.enabled),
-        (ID_MUTE_APP, d.dnd.mute_app_icon),
         (ID_MUTE_TRAY, d.dnd.mute_tray_icon),
         (ID_MUTE_WINDOW, d.dnd.mute_window),
         (ID_MINI, d.display.mini_window),

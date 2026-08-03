@@ -133,16 +133,12 @@ pub struct DndSettings {
     /// realising it.
     pub enabled: bool,
 
-    /// Draw a struck-through bell on the application icon while muted.
-    ///
-    /// Windows does not light its own indicator for changes made by this app;
-    /// see `os::dnd`. The timer tray icon remains dedicated to progress because
-    /// it cannot show both clearly at sixteen pixels; see `ui::icon`.
-    pub mute_app_icon: bool,
-
     /// Show the mark as a separate notification-area icon while muted, as
     /// close to Windows' own indicator as an ordinary program can get: its own
     /// icon beside the clock, present only while muted.
+    ///
+    /// The timer tray icon remains dedicated to progress because it cannot show
+    /// both clearly at sixteen pixels; see `ui::icon`.
     pub mute_tray_icon: bool,
 
     /// Draw the mark beside the countdown in the compact timer window.
@@ -153,7 +149,6 @@ impl Default for DndSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            mute_app_icon: true,
             mute_tray_icon: true,
             mute_window: true,
         }
@@ -163,7 +158,7 @@ impl Default for DndSettings {
 impl DndSettings {
     /// Whether any muted-state indicator is enabled.
     pub fn wants_indicator(&self) -> bool {
-        self.mute_app_icon || self.mute_tray_icon || self.mute_window
+        self.mute_tray_icon || self.mute_window
     }
 }
 

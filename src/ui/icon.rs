@@ -13,11 +13,11 @@
 //! This module also draws the **muted mark** - the struck-through bell Windows
 //! uses for "notifications off" - but never on the timer icon. Windows will not
 //! light its own indicator for a change the shell did not make (see
-//! [`crate::os::dnd`]), so the app draws that mark itself, as an icon of its
-//! own beside the clock and on the application icon. It is not squeezed into
-//! the timer icon as well: sixteen pixels hold a progress ring or a bell, and
-//! every attempt at both - filled, hollow, struck through the mark or through
-//! the whole icon - came out a smudge.
+//! [`crate::os::dnd`]), so the app draws that mark itself, as an icon of its own
+//! beside the clock. It is not squeezed into the timer icon as well: sixteen
+//! pixels hold a progress ring or a bell, and every attempt at both - filled,
+//! hollow, struck through the mark or through the whole icon - came out a
+//! smudge.
 //!
 //! Everything here is tuned for **16 pixels**, which is what the notification
 //! area actually renders. Designs that look good enlarged tend not to survive
@@ -25,17 +25,10 @@
 //! out for "paused", and at real size it was an indistinct blob that broke into
 //! fragments when paused.
 
-use windows::core::PCWSTR;
 use windows::Win32::Graphics::Gdi::{
-    CreateBitmap, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GdiFlush, GetDC,
-    GetDeviceCaps, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
-    LOGPIXELSX,
+    CreateBitmap, DeleteObject, GetDC, GetDeviceCaps, ReleaseDC, LOGPIXELSX,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateIconIndirect, DestroyIcon, DrawIconEx, LoadImageW, DI_NORMAL, HICON, ICONINFO,
-    IMAGE_ICON, LR_DEFAULTCOLOR,
-};
+use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, DestroyIcon, HICON, ICONINFO};
 
 use crate::timer::{Phase, State};
 
@@ -182,46 +175,6 @@ pub fn mute_mark_pixels(size: i32, rgb: (u8, u8, u8)) -> Vec<u8> {
 /// Breathing room around a mark that has a whole icon to itself, as a fraction
 /// of the icon. The shell's own glyphs do not touch their edges either.
 const MARK_PADDING: f32 = 0.02;
-
-/// The application icon from the executable, with the muted mark burned in.
-///
-/// Composited onto the artwork that ships in the binary rather than a redrawn
-/// substitute, so a muted window still wears the application's own icon.
-pub fn app_icon_with_mute_mark(size: i32) -> Option<OwnedIcon> {
-    let size = size.max(16);
-    unsafe {
-        let instance = GetModuleHandleW(None).ok()?;
-        let loaded = LoadImageW(
-            Some(instance.into()),
-            PCWSTR(1 as *const u16),
-            IMAGE_ICON,
-            size,
-            size,
-            LR_DEFAULTCOLOR,
-        )
-        .ok()?;
-        let base = HICON(loaded.0);
-        let pixels = icon_pixels(base, size);
-        let _ = DestroyIcon(base);
-
-        let mut pixels = pixels?;
-        let s = size as f32;
-        let (cx, cy) = (s * 0.70, s * 0.70);
-        draw_shape(&mut pixels, size, BADGE_PAD, 0.92, |px, py| {
-            let (dx, dy) = (px - cx, py - cy);
-            dx * dx + dy * dy <= (s * 0.29) * (s * 0.29)
-        });
-        let mark = MuteMark::new(cx, cy, s * 0.24);
-        draw_shape(&mut pixels, size, BADGE_INK, 1.0, |px, py| {
-            mark.covers(px, py)
-        });
-        icon_from_pixels(&pixels, size)
-    }
-}
-
-/// Dark pad drawn under the badge so the mark reads whatever it sits on.
-const BADGE_PAD: (u8, u8, u8) = (0x10, 0x12, 0x1E);
-const BADGE_INK: (u8, u8, u8) = (0xF2, 0xF4, 0xFF);
 
 /// Build an `HICON` from premultiplied BGRA pixels, top-down.
 fn icon_from_pixels(pixels: &[u8], size: i32) -> Option<OwnedIcon> {
@@ -409,53 +362,6 @@ fn blend_over(out: &mut [u8], idx: usize, rgb: (u8, u8, u8), a: f32) {
         let src = channel as f32 * a;
         out[idx + i] = (src + out[idx + i] as f32 * inv).min(255.0) as u8;
     }
-}
-
-/// The 32-bit pixels of an existing icon, premultiplied and top-down.
-///
-/// Drawing the icon into a transparent DIB section is what makes this
-/// premultiplied: `DrawIconEx` composites 32-bit icons with `AlphaBlend`, which
-/// works in premultiplied space, so the result drops straight into the same
-/// pipeline as everything else here.
-unsafe fn icon_pixels(icon: HICON, size: i32) -> Option<Vec<u8>> {
-    let screen = GetDC(None);
-    let dc = CreateCompatibleDC(Some(screen));
-    let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-    let info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: size,
-            biHeight: -size,
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let bmp = CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut bits, None, 0);
-
-    let out = (|| {
-        let bmp = bmp.ok()?;
-        if bits.is_null() {
-            let _ = DeleteObject(bmp.into());
-            return None;
-        }
-        let old = SelectObject(dc, bmp.into());
-        let drawn = DrawIconEx(dc, 0, 0, icon, size, size, 0, None, DI_NORMAL).is_ok();
-        let _ = GdiFlush();
-        SelectObject(dc, old);
-
-        let out = drawn.then(|| {
-            std::slice::from_raw_parts(bits as *const u8, (size * size * 4) as usize).to_vec()
-        });
-        let _ = DeleteObject(bmp.into());
-        out
-    })();
-
-    let _ = DeleteDC(dc);
-    ReleaseDC(None, screen);
-    out
 }
 
 /// Ink for a glyph that has to stay legible on this user's taskbar.
