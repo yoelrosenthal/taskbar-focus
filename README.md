@@ -9,18 +9,13 @@
 Work in 25-minute stretches. While you're focused, Windows goes quiet.
 When you take a break, everything comes back.
 
-**Windows 10 and 11 only, 64-bit.**
+*A Windows application. Needs Windows 10 or 11, 64-bit.*
 
 </div>
 
 ---
 
 ## Install
-
-This is a Windows program and only a Windows program. It is built on the Windows
-notification area, the Windows notification service and the Windows quiet-hours
-settings, none of which have an equivalent elsewhere — so there is no macOS or
-Linux version, and there is not going to be one. Everything below is PowerShell.
 
 **With [Scoop](https://scoop.sh)** — recommended, and updates cleanly:
 
@@ -31,7 +26,7 @@ scoop install taskbar-focus
 
 Later: `scoop update taskbar-focus`
 
-**With Cargo**, if you have Rust on Windows:
+**With Cargo**, if you have Rust:
 
 ```powershell
 cargo install taskbar-focus
@@ -169,9 +164,6 @@ time you were away deducted. Explorer restarted? The tray icon reappears.
 **Privacy.** No network access at all — there's no networking code in it. No
 telemetry, no accounts, no auto-update. It never needs administrator rights.
 
-**Needs** Windows 10 or 11, 64-bit — and nothing else: no runtime to install, no
-framework. It does not run on macOS or Linux.
-
 ## Uninstall
 
 `scoop uninstall taskbar-focus`, or `cargo uninstall taskbar-focus`, or just
@@ -181,10 +173,6 @@ Either way, settings stay in `%APPDATA%\taskbar-focus` until you delete that
 folder. Do Not Disturb is switched back when the app exits.
 
 ## For developers
-
-Build it on Windows, with the MSVC toolchain. Every source file below `src/os/`
-and `src/ui/` calls Win32 directly, so a build on any other platform does not
-compile and is not meant to.
 
 ```powershell
 cargo build --release        # target\release\taskbar-focus.exe
