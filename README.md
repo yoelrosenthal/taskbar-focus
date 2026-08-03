@@ -64,6 +64,24 @@ it switches off. That's the whole point of the app.
 Your **priority** apps and contacts still get through — it uses exactly the mode
 Windows' own "Do not disturb" button uses, and never touches your priority list.
 
+### A muted bell, because Windows will not draw one
+
+Windows only shows its own muted icon when the taskbar itself switches Do Not
+Disturb on, so muting from another program leaves no visible trace at all. This
+app draws that trace instead — the same crossed-out bell — and it follows Do Not
+Disturb however it was switched on, including by you.
+
+- a **bell on the application icon** — its title bar and taskbar button
+- a **separate bell beside the clock**, present only while you are muted
+- a **bell in the compact timer window**, next to the countdown
+
+All three indicators are on by default and can be switched independently under
+*Do Not Disturb* in Settings. Windows 11 files new tray icons behind the `^`
+arrow — drag the bell out once and it stays where you put it.
+
+The timer's tray icon is left alone: sixteen pixels hold a progress ring or a
+bell, not both.
+
 ### A tray icon that shows progress
 
 | | |
@@ -127,10 +145,11 @@ works without the app running. Everything it does is logged to
 rather than turning off your protection. Or switch off **Mute notifications
 during focus** and use it as a plain timer.
 
-**Windows' moon icon may not appear.** Notifications really are muted, but the
-indicator beside the clock often doesn't update, because that part of the
-taskbar is drawn by Explorer and it caches the state. Use the app's own signals:
-the tray icon turns red, and Settings says *notifications muted*.
+**Windows' own muted icon will not appear.** Notifications really are muted, but
+Explorer caches the indicator beside the clock, so it does not update without
+restarting Explorer. Restarting the desktop for an icon is unreasonable, so the
+app draws [its own mark](#a-muted-bell-because-windows-will-not-draw-one)
+instead.
 
 **Your settings** live in `%APPDATA%\taskbar-focus\config.toml` — plain text you
 can back up, sync or edit by hand.

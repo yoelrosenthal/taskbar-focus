@@ -56,9 +56,10 @@ pub fn report() -> String {
     ));
     if !cfg.dnd.enabled {
         s.push_str(
-            "  With this disabled the program does none of the things below: no\n  \
-             registry writes, no service control, no ntdll lookups. It is then\n  \
-             just a timer with a tray icon.\n\n",
+            "  With this disabled the program makes none of the registry writes\n  \
+             below and controls no services. It is then just a timer with a tray\n  \
+             icon - apart from the read-only state query described under MUTED\n  \
+             INDICATOR, which only happens if you switched an indicator on.\n\n",
         );
     } else {
         s.push_str(
@@ -104,8 +105,9 @@ pub fn report() -> String {
 
         s.push_str(
             "  Note: notifications are genuinely suppressed, but Windows' own\n  \
-             indicator beside the clock may not appear, because the taskbar is\n  \
-             drawn by Explorer and it caches that state. Cosmetic only.\n\n",
+             indicator beside the clock does not appear, because the taskbar is\n  \
+             drawn by Explorer and it caches that state. Cosmetic only, and the\n  \
+             mark this app draws for itself covers it; see below.\n\n",
         );
         s.push_str(&format!(
             "  Live state right now: {}\n\n",
@@ -114,6 +116,31 @@ pub fn report() -> String {
                 None => "could not be read on this build".into(),
             }
         ));
+    }
+
+    let on_off = |enabled| if enabled { "ON" } else { "OFF" };
+    s.push_str(&format!(
+        "MUTED INDICATOR\n  \
+         Bell on the application icon:     {}\n  \
+         Separate bell beside the clock:   {}\n  \
+         Bell in the compact timer window: {}\n",
+        on_off(cfg.dnd.mute_app_icon),
+        on_off(cfg.dnd.mute_tray_icon),
+        on_off(cfg.dnd.mute_window)
+    ));
+    if cfg.dnd.wants_indicator() {
+        s.push_str(
+            "  Because Windows will not show an indicator for a change it did not\n  \
+             make itself, the program draws one: the same crossed-out bell the\n  \
+             shell uses. To know when to draw it, it reads the effective state\n  \
+             every two seconds using the same READ-ONLY NtQueryWnfStateData call\n  \
+             described above. Nothing is written, and the mark follows Do Not\n  \
+             Disturb however it was switched on - including by you, in Windows'\n  \
+             own settings. The timer's own tray icon is left alone: at sixteen\n  \
+             pixels it can show progress or a bell, not both.\n\n",
+        );
+    } else {
+        s.push_str("  All three are off, so no state is read at all for this.\n\n");
     }
 
     s.push_str(
@@ -132,7 +159,8 @@ pub fn report() -> String {
          - Registers global hotkeys (default Ctrl+Alt+F / Ctrl+Alt+B) via\n    \
            RegisterHotKey. It does not install a keyboard hook and cannot see\n    \
            any other keystrokes.\n  \
-         - Adds a notification-area icon and shows notifications through it.\n\n",
+         - Adds a notification-area icon and shows notifications through it,\n    \
+           plus a second one while notifications are muted.\n\n",
     );
 
     s.push_str(

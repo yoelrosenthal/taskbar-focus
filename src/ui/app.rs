@@ -26,6 +26,15 @@ pub const MUTEX_NAME: &str = "Local\\TaskbarFocusSingleInstance";
 const WM_TRAY: u32 = WM_APP + 1;
 const WM_DND_REPORT: u32 = WM_APP + 2;
 
+/// Notification-area icon ids. The muted mark is a second icon rather than
+/// part of the first so it can sit beside the clock on its own, which is where
+/// Windows would have put its own indicator.
+///
+/// It is an indicator, not a control, so any click on it opens the menu rather
+/// than starting or pausing a session the way the timer icon does.
+const TRAY_ID: u32 = 1;
+const MUTE_TRAY_ID: u32 = 2;
+
 const TIMER_ID: usize = 1;
 /// Twice a second: the countdown stays honest without burning power.
 const TICK_MS: u32 = 500;
@@ -90,6 +99,15 @@ pub struct App {
     hotkeys: Hotkeys,
     taskbar_created_msg: u32,
     settings_hwnd: Option<HWND>,
+    /// The standalone muted mark beside the clock, shown only while muted.
+    mute_tray: Tray,
+    mute_icon: Option<OwnedIcon>,
+    /// Application icon wearing the mark, built the first time it is needed
+    /// and kept for as long as a window might still be drawing it.
+    marked_app_icon: Option<OwnedIcon>,
+    /// What the settings window's icon was last set from, so it is not pushed
+    /// again on every tick.
+    window_icon_marked: Option<bool>,
 }
 
 /// Entry point for the UI. Blocks until the user exits.
@@ -157,13 +175,17 @@ pub fn run(
             hwnd,
             mini_hwnd: None,
             orch: Orchestrator::new(config, timer, dnd),
-            tray: Tray::new(hwnd, 1, WM_TRAY),
+            tray: Tray::new(hwnd, TRAY_ID, WM_TRAY),
             current_icon: None,
             last_visual: None,
             last_tooltip: String::new(),
             hotkeys: Hotkeys::new(hwnd),
             taskbar_created_msg,
             settings_hwnd: None,
+            mute_tray: Tray::new(hwnd, MUTE_TRAY_ID, WM_TRAY),
+            mute_icon: None,
+            marked_app_icon: None,
+            window_icon_marked: None,
         });
 
         app.register_hotkeys();
@@ -303,6 +325,7 @@ impl App {
     /// unchanged icon or tooltip to the shell twice a second is what makes a
     /// tray icon shimmer.
     fn refresh(&mut self) {
+        let muted = self.orch.dnd_active();
         let visual = Visual::from_state(self.orch.timer.state());
         let tooltip = self.orch.tooltip();
         let icon_changed = self.last_visual != Some(visual) || self.current_icon.is_none();
@@ -323,12 +346,77 @@ impl App {
             self.last_tooltip = tooltip;
         }
 
+        self.sync_mute_tray(muted);
+        self.sync_window_icon(muted);
+
         if let Some(s) = self.settings_hwnd {
             crate::ui::settings::refresh_status(s);
         }
         if let Some(m) = self.mini_hwnd {
             crate::ui::mini::refresh(m, self.orch.config.display.always_on_top);
         }
+    }
+
+    /// Add or remove the standalone muted mark in the notification area.
+    ///
+    /// It only exists while notifications are muted: an indicator that is
+    /// always there says nothing. Windows 11 files new tray icons into the
+    /// overflow, so the first time it appears the user may have to drag it out
+    /// - which is also true of the timer icon itself.
+    fn sync_mute_tray(&mut self, muted: bool) {
+        let want = muted && self.orch.config.dnd.mute_tray_icon;
+        if want == self.mute_icon.is_some() {
+            return;
+        }
+        if !want {
+            self.mute_tray.remove();
+            self.mute_icon = None;
+            return;
+        }
+        if let Some(icon) = icon::render_mute_icon(icon::tray_icon_size()) {
+            self.mute_tray
+                .set(icon.handle(), "Notifications are muted - taskbar-focus");
+            self.mute_icon = Some(icon);
+        }
+    }
+
+    /// Put the muted mark on the application icon, or take it off again.
+    ///
+    /// The settings window is the only one that shows an application icon: the
+    /// main window is a message-only tool window and the compact window has no
+    /// caption and stays out of the taskbar by design.
+    fn sync_window_icon(&mut self, muted: bool) {
+        let want = muted && self.orch.config.dnd.mute_app_icon;
+        let Some(hwnd) = self.settings_hwnd else {
+            self.window_icon_marked = None;
+            return;
+        };
+        if self.window_icon_marked == Some(want) {
+            return;
+        }
+
+        let icon = if want {
+            if self.marked_app_icon.is_none() {
+                self.marked_app_icon = icon::app_icon_with_mute_mark(32);
+            }
+            self.marked_app_icon
+                .as_ref()
+                .map(|i| i.handle())
+                .unwrap_or_else(shared_icon)
+        } else {
+            shared_icon()
+        };
+        unsafe {
+            for which in [ICON_SMALL, ICON_BIG] {
+                SendMessageW(
+                    hwnd,
+                    WM_SETICON,
+                    Some(WPARAM(which as usize)),
+                    Some(LPARAM(icon.0 as isize)),
+                );
+            }
+        }
+        self.window_icon_marked = Some(want);
     }
 
     fn apply_events(&mut self, events: Vec<UiEvent>) {
@@ -552,6 +640,8 @@ impl App {
             return;
         }
         self.settings_hwnd = crate::ui::settings::open(self.hwnd, self as *mut App);
+        self.window_icon_marked = None;
+        self.refresh();
     }
 
     /// Called by the settings window when the user saves.
@@ -582,6 +672,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 
     if msg == app.taskbar_created_msg {
         app.tray.forget();
+        app.mute_tray.forget();
+        app.mute_icon = None;
         app.last_visual = None;
         app.refresh();
         return LRESULT(0);
@@ -589,7 +681,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 
     match msg {
         WM_TRAY => {
+            let indicator = wparam.0 as u32 == MUTE_TRAY_ID;
             match lparam.0 as u32 {
+                WM_LBUTTONUP if indicator => app.show_menu(),
                 WM_LBUTTONUP => app.handle_command(&Command::Toggle),
                 WM_RBUTTONUP | WM_CONTEXTMENU => app.show_menu(),
                 WM_LBUTTONDBLCLK => app.open_settings(),
@@ -663,6 +757,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             session::save(&app.orch.timer);
             crate::audit::log_stop();
             app.tray.remove();
+            app.mute_tray.remove();
             PostQuitMessage(0);
             LRESULT(0)
         }
