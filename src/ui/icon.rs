@@ -10,6 +10,15 @@
 //!   * **the ring** - how much of the interval has elapsed
 //!   * **opacity**  - faded to 45% while paused
 //!
+//! This module also draws the **muted mark** - the struck-through bell Windows
+//! uses for "notifications off" - but never on the timer icon. Windows will not
+//! light its own indicator for a change the shell did not make (see
+//! [`crate::os::dnd`]), so the app draws that mark itself, as an icon of its own
+//! beside the clock. It is not squeezed into the timer icon as well: sixteen
+//! pixels hold a progress ring or a bell, and every attempt at both - filled,
+//! hollow, struck through the mark or through the whole icon - came out a
+//! smudge.
+//!
 //! Everything here is tuned for **16 pixels**, which is what the notification
 //! area actually renders. Designs that look good enlarged tend not to survive
 //! that: the first version used a thick ring over a dark track with notches cut
@@ -132,8 +141,43 @@ pub fn tray_icon_size() -> i32 {
 /// Rasterise the icon. Returns `None` if Windows refuses to make the bitmaps.
 pub fn render(v: Visual, size: i32) -> Option<OwnedIcon> {
     let size = size.max(8);
-    let pixels = rasterise(v, size);
+    icon_from_pixels(&rasterise(v, size), size)
+}
 
+/// The muted mark on its own, for the separate notification-area indicator.
+///
+/// Coloured for the current system theme rather than the app's palette: this
+/// icon sits among the shell's own glyphs beside the clock, and a fixed colour
+/// is invisible on one theme or the other.
+pub fn render_mute_icon(size: i32) -> Option<OwnedIcon> {
+    let size = size.max(8);
+    icon_from_pixels(&mute_mark_pixels(size, taskbar_ink()), size)
+}
+
+/// The muted mark alone, as premultiplied BGRA pixels, top-down.
+///
+/// Shared with the compact window so that the mark is drawn by this one
+/// rasteriser everywhere it appears. The window used to build it out of GDI
+/// regions instead, which have no antialiasing and made a visibly jagged
+/// version of the same shape.
+///
+/// The bell is hollow here, as the shell draws its own. A filled bell at this
+/// size is a heavy blob; the outline is what makes it read as a bell rather
+/// than a wedge.
+pub fn mute_mark_pixels(size: i32, rgb: (u8, u8, u8)) -> Vec<u8> {
+    let c = (size as f32 - 1.0) / 2.0;
+    let mark = MuteMark::new(c, c, size as f32 / 2.0 - 0.5 - size as f32 * MARK_PADDING);
+    let mut pixels = vec![0u8; (size * size * 4) as usize];
+    draw_shape(&mut pixels, size, rgb, 1.0, |px, py| mark.covers(px, py));
+    pixels
+}
+
+/// Breathing room around a mark that has a whole icon to itself, as a fraction
+/// of the icon. The shell's own glyphs do not touch their edges either.
+const MARK_PADDING: f32 = 0.02;
+
+/// Build an `HICON` from premultiplied BGRA pixels, top-down.
+fn icon_from_pixels(pixels: &[u8], size: i32) -> Option<OwnedIcon> {
     unsafe {
         let color = CreateBitmap(size, size, 1, 32, Some(pixels.as_ptr() as *const _));
         if color.is_invalid() {
@@ -157,6 +201,183 @@ pub fn render(v: Visual, size: i32) -> Option<OwnedIcon> {
         let _ = DeleteObject(color.into());
         let _ = DeleteObject(mask.into());
         icon.ok().map(OwnedIcon)
+    }
+}
+
+/// A bell with a stroke through it: the mark Windows itself uses for
+/// "notifications off", and the one people already read as muted.
+///
+/// The bell is hollow, matching the shell's own glyph and avoiding the heavy
+/// blob produced by a filled bell at tray size.
+#[derive(Clone, Copy)]
+struct MuteMark {
+    cx: f32,
+    cy: f32,
+    /// Half the width of the square the mark is drawn in.
+    r: f32,
+}
+
+impl MuteMark {
+    fn new(cx: f32, cy: f32, r: f32) -> Self {
+        Self { cx, cy, r }
+    }
+
+    /// Is this sample point on the mark?
+    ///
+    /// Everything is expressed in a square running from -1 to 1 about the
+    /// centre, so the same proportions hold at every size.
+    fn covers(&self, px: f32, py: f32) -> bool {
+        let u = (px - self.cx) / self.r;
+        let v = (py - self.cy) / self.r;
+        let detail = self.r >= DETAIL_PX;
+        let distance = bell(u, v, detail);
+        let body = distance <= 0.0 && distance >= -self.outline_width();
+        if !detail {
+            return body;
+        }
+        (body && stroke(u, v, self.gap()) > 0.0) || stroke(u, v, self.line()) <= 0.0
+    }
+
+    /// Line width of the outline, in normalised units, with a pixel floor for
+    /// the same reason the stroke has one.
+    fn outline_width(&self) -> f32 {
+        OUTLINE_WIDTH.max(MIN_OUTLINE_PX / self.r)
+    }
+
+    /// Half-thickness of the stroke, never thinner than [`MIN_STROKE_PX`].
+    ///
+    /// The proportional width alone is what made the small icon look scratchy:
+    /// at tray size it works out under a pixel, and a sub-pixel diagonal does
+    /// not render as a line, it dithers into a grey smear.
+    fn line(&self) -> f32 {
+        STROKE_WIDTH.max(MIN_STROKE_PX / self.r)
+    }
+
+    /// Half-thickness of the clearance cut around the stroke, kept the same
+    /// distance outside it however thick the stroke had to become.
+    fn gap(&self) -> f32 {
+        self.line() + (STROKE_GAP - STROKE_WIDTH)
+    }
+}
+
+/// Half-thickness of the stroke, and of the clearance cut around it so the
+/// stroke stays visible where it crosses the bell.
+///
+/// Both are as narrow as they can be: at 16 pixels a wide clearance saws the
+/// bell into two unrecognisable fragments, which is what the first attempt did.
+const STROKE_WIDTH: f32 = 0.075;
+const STROKE_GAP: f32 = 0.155;
+/// Radius, in pixels, below which the mark drops its stroke and its small
+/// parts. Above it the mark is drawn in full; below, both would be sub-pixel
+/// features that dither into static rather than reading as anything.
+const DETAIL_PX: f32 = 5.6;
+/// Half-thickness floor for the stroke, in pixels.
+const MIN_STROKE_PX: f32 = 0.75;
+/// Line width of the hollow bell, and its floor in pixels.
+const OUTLINE_WIDTH: f32 = 0.17;
+const MIN_OUTLINE_PX: f32 = 1.25;
+
+/// The bell silhouette: a domed body on a base bar, with a handle above and a
+/// clapper below.
+///
+/// Written as a signed distance - negative inside - because that is what lets
+/// the same description be filled or outlined without describing the shape
+/// twice, and unions are then just a minimum.
+///
+/// `detail` adds the handle above and the clapper below. They are dropped when
+/// the mark is drawn smaller than [`DETAIL_PX`], where each would be a speck a
+/// pixel or two across: too small to be recognised, big enough to fill the
+/// shape with half-lit pixels and make the whole mark look like static.
+fn bell(u: f32, v: f32, detail: bool) -> f32 {
+    let disc = |cy: f32, r: f32| (u * u + (v - cy) * (v - cy)).sqrt() - r;
+    let box_ = |cy: f32, hu: f32, hv: f32| {
+        let (du, dv) = (u.abs() - hu, (v - cy).abs() - hv);
+        du.max(dv).min(0.0) + (du.max(0.0).powi(2) + dv.max(0.0).powi(2)).sqrt()
+    };
+
+    let far = 9.0f32;
+    let handle = if detail { disc(-0.88, 0.11) } else { far };
+    let clapper = if detail { disc(0.82, 0.15) } else { far };
+    let dome = disc(-0.22, 0.52);
+    let base = box_(0.54, 0.74, if detail { 0.08 } else { 0.13 });
+
+    let skirt = {
+        const NU: f32 = 0.989;
+        const NV: f32 = -0.146;
+        let side = NU * (u.abs() - 0.52) + NV * (v + 0.22);
+        side.max(-0.22 - v).max(v - 0.46)
+    };
+
+    handle.min(dome).min(skirt).min(base).min(clapper)
+}
+
+/// A stroke of half-thickness `half` running from the lower left to the upper
+/// right, the way the system's own muted mark is struck through.
+fn stroke(u: f32, v: f32, half: f32) -> f32 {
+    const DIAGONAL: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    let across = ((u + v) * DIAGONAL).abs() - half;
+    let along = ((u - v) * DIAGONAL).abs() - 0.98;
+    across.max(along)
+}
+
+/// Paint a shape into a premultiplied BGRA buffer, antialiased by the same
+/// supersampling the ring uses.
+fn draw_shape(
+    out: &mut [u8],
+    size: i32,
+    rgb: (u8, u8, u8),
+    alpha: f32,
+    inside: impl Fn(f32, f32) -> bool,
+) {
+    let n = size as usize;
+    let samples = (SS * SS) as f32;
+    for y in 0..size {
+        for x in 0..size {
+            let mut hits = 0;
+            for sy in 0..SS {
+                for sx in 0..SS {
+                    let px = x as f32 + (sx as f32 + 0.5) / SS as f32 - 0.5;
+                    let py = y as f32 + (sy as f32 + 0.5) / SS as f32 - 0.5;
+                    if inside(px, py) {
+                        hits += 1;
+                    }
+                }
+            }
+            if hits > 0 {
+                let idx = ((y as usize) * n + x as usize) * 4;
+                blend_over(out, idx, rgb, alpha * hits as f32 / samples);
+            }
+        }
+    }
+}
+
+/// Composite one premultiplied sample over the pixel at `idx`.
+fn blend_over(out: &mut [u8], idx: usize, rgb: (u8, u8, u8), a: f32) {
+    let a = a.clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return;
+    }
+    let inv = 1.0 - a;
+    for (i, channel) in [rgb.2, rgb.1, rgb.0, 0xFF].into_iter().enumerate() {
+        let src = channel as f32 * a;
+        out[idx + i] = (src + out[idx + i] as f32 * inv).min(255.0) as u8;
+    }
+}
+
+/// Ink for a glyph that has to stay legible on this user's taskbar.
+///
+/// The notification area follows the *system* theme, which is a documented
+/// registry value; guessing produces a mark that is invisible on one theme.
+fn taskbar_ink() -> (u8, u8, u8) {
+    let light = crate::os::registry::Key::open_read(
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+    )
+    .and_then(|k| k.get_u32("SystemUsesLightTheme"))
+    .is_some_and(|v| v != 0);
+    if light {
+        (0x2B, 0x30, 0x42)
+    } else {
+        (0xE8, 0xEC, 0xFA)
     }
 }
 

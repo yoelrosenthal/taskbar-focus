@@ -332,13 +332,100 @@ fn glyph_advance(size: i32) -> i32 {
     bar * 2 + gap + (size as f32 * 0.45).round() as i32
 }
 
-/// Draw the pause icon (when paused) and the clock as one aligned group.
+/// Draw the shared antialiased muted mark beside the clock.
+unsafe fn mute_glyph(dc: HDC, x: i32, cy: i32, size: i32, colour: COLORREF) {
+    let rgb = (
+        (colour.0 & 0xFF) as u8,
+        ((colour.0 >> 8) & 0xFF) as u8,
+        ((colour.0 >> 16) & 0xFF) as u8,
+    );
+    let pixels = crate::ui::icon::mute_mark_pixels(size, rgb);
+
+    let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+    let info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: size,
+            biHeight: -size,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let Ok(bmp) = CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut bits, None, 0) else {
+        return;
+    };
+    if bits.is_null() {
+        let _ = DeleteObject(bmp.into());
+        return;
+    }
+
+    std::ptr::copy_nonoverlapping(pixels.as_ptr(), bits as *mut u8, pixels.len());
+    let src = CreateCompatibleDC(Some(dc));
+    let old = SelectObject(src, bmp.into());
+    let blend = BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
+        BlendFlags: 0,
+        SourceConstantAlpha: 255,
+        AlphaFormat: AC_SRC_ALPHA as u8,
+    };
+    let _ = AlphaBlend(
+        dc,
+        x,
+        cy - size / 2,
+        size,
+        size,
+        src,
+        0,
+        0,
+        size,
+        size,
+        blend,
+    );
+    SelectObject(src, old);
+    let _ = DeleteDC(src);
+    let _ = DeleteObject(bmp.into());
+}
+
+/// Width the muted mark needs, including the gap after it.
+fn mute_advance(size: i32) -> i32 {
+    size + (size as f32 * 0.38).round() as i32
+}
+
+/// The small marks that share the clock's line: muted, and paused.
+#[derive(Clone, Copy)]
+struct Marks {
+    muted: bool,
+    paused: bool,
+}
+
+impl Marks {
+    /// Width both marks take before the clock starts.
+    fn advance(self, glyph_size: i32) -> i32 {
+        let muted = if self.muted {
+            mute_advance(glyph_size)
+        } else {
+            0
+        };
+        let paused = if self.paused {
+            glyph_advance(glyph_size)
+        } else {
+            0
+        };
+        muted + paused
+    }
+}
+
+/// Draw the muted mark, the pause icon (when paused) and the clock as one
+/// aligned group.
 #[allow(clippy::too_many_arguments)]
 unsafe fn draw_clock_group(
     dc: HDC,
     font: HFONT,
     time: &str,
-    paused: bool,
+    marks: Marks,
     text_colour: COLORREF,
     accent: COLORREF,
     area: RECT,
@@ -348,7 +435,7 @@ unsafe fn draw_clock_group(
     let cy = (area.top + area.bottom) / 2;
     let glyph_size = ((area.bottom - area.top) as f32 * 0.42).round() as i32;
     let glyph_size = glyph_size.clamp(6, 40);
-    let advance = if paused { glyph_advance(glyph_size) } else { 0 };
+    let advance = marks.advance(glyph_size);
     let total = advance + clock_w;
 
     let x = if align == DT_CENTER {
@@ -360,8 +447,16 @@ unsafe fn draw_clock_group(
     }
     .max(area.left);
 
-    if paused {
-        pause_glyph(dc, x, cy, glyph_size, accent);
+    if marks.muted {
+        mute_glyph(dc, x, cy, glyph_size, COLORREF(TEXT));
+    }
+    if marks.paused {
+        let after_mark = if marks.muted {
+            mute_advance(glyph_size)
+        } else {
+            0
+        };
+        pause_glyph(dc, x + after_mark, cy, glyph_size, accent);
     }
 
     let old = SelectObject(dc, font.into());
@@ -425,6 +520,10 @@ unsafe fn paint(hwnd: HWND, st: &mut State_) {
     let pad_x = (w / 16).clamp(6, 14);
     let bar_h = (h / 10).clamp(3, 8);
     let paused = matches!(state, State::Paused { .. });
+    let marks = Marks {
+        muted: app.orch.dnd_active() && app.config().dnd.mute_window,
+        paused,
+    };
 
     let time = match state.remaining() {
         Some(d) => crate::orchestrator::mmss(d),
@@ -489,7 +588,7 @@ unsafe fn paint(hwnd: HWND, st: &mut State_) {
             mem,
             st.font,
             &time,
-            paused,
+            marks,
             COLORREF(if idle { TEXT_DIM } else { TEXT }),
             accent,
             RECT {
@@ -516,8 +615,7 @@ unsafe fn paint(hwnd: HWND, st: &mut State_) {
         // Reserve the clock's own width first, then offer the label whatever is
         // left. Letting both spans cover the full width made them overlap.
         let glyph_size = (((h - bar_h) as f32 * 0.42).round() as i32).clamp(6, 40);
-        let group_w =
-            text_width(mem, st.font, &time) + if paused { glyph_advance(glyph_size) } else { 0 };
+        let group_w = text_width(mem, st.font, &time) + marks.advance(glyph_size);
         let clock_left = (w - pad_x - group_w).max(text_left);
         let label_left = text_left + 4;
         let chosen = pick_label(mem, st.font_small, state, clock_left - 8 - label_left);
@@ -526,7 +624,7 @@ unsafe fn paint(hwnd: HWND, st: &mut State_) {
             mem,
             st.font,
             &time,
-            paused,
+            marks,
             COLORREF(if idle { TEXT_DIM } else { TEXT }),
             accent,
             RECT {

@@ -1,0 +1,169 @@
+name: Release on merge
+
+# Merging a pull request into main bumps the version, writes its CHANGELOG.md
+# section, tags the commit and then runs the release workflow against that tag.
+#
+# The bump comes from a release:major / release:minor / release:patch label if
+# one is present, and otherwise from the same heuristic the suggestion comment
+# used. A release:skip label stops the whole thing.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: >-
+      github.event.pull_request.merged == true
+      && !contains(github.event.pull_request.labels.*.name, 'release:skip')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      tag: v${{ steps.version.outputs.next }}
+      version: ${{ steps.version.outputs.next }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Decide the bump
+        id: level
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          chosen=""
+          for level in major minor patch; do
+            if grep -q "\"release:$level\"" <<<"$LABELS"; then chosen="$level"; break; fi
+          done
+
+          if [ -n "$chosen" ]; then
+            source="the release:$chosen label"
+          else
+            chosen=$(bash .github/scripts/suggest-bump.sh "$BASE..$HEAD" "$TITLE" \
+              | grep '^level=' | cut -d= -f2)
+            source="no label, so the commit heuristic"
+          fi
+
+          echo "level=$chosen" >> "$GITHUB_OUTPUT"
+          echo "::notice::Releasing a $chosen bump ($source)."
+
+      - name: Work out the new version
+        id: version
+        env:
+          LEVEL: ${{ steps.level.outputs.level }}
+        run: |
+          current=$(grep -m1 -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
+
+          # A previous run that bumped and tagged but failed to publish leaves
+          # main's tip tagged with its own version. Re-running the whole
+          # workflow must retry that release, not bump past it and strand it.
+          if git rev-parse -q --verify "refs/tags/v$current" >/dev/null \
+            && [ "$(git rev-parse "refs/tags/v$current^{commit}")" = "$(git rev-parse HEAD)" ]; then
+            echo "resume=true" >> "$GITHUB_OUTPUT"
+            echo "current=$current" >> "$GITHUB_OUTPUT"
+            echo "next=$current" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$current is already tagged at this commit; retrying its release instead of bumping again."
+            exit 0
+          fi
+
+          next=$(bash .github/scripts/next-version.sh "$current" "$LEVEL")
+          echo "resume=false" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse -q --verify "refs/tags/v$next" >/dev/null; then
+            echo "::error::v$next already exists. Cargo.toml and the tags are out of step."
+            exit 1
+          fi
+
+      - name: Bump Cargo.toml and Cargo.lock
+        if: steps.version.outputs.resume != 'true'
+        env:
+          CURRENT: ${{ steps.version.outputs.current }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          perl -0pi -e 's/^version\s*=\s*"\Q$ENV{CURRENT}\E"/version = "$ENV{NEXT}"/m' Cargo.toml
+          cargo update --workspace --quiet
+
+          # Fail loudly rather than tagging a commit whose lockfile still names
+          # the old version, which would break every --locked build downstream.
+          got=$(grep -m1 -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
+          [ "$got" = "$NEXT" ] || { echo "::error::Cargo.toml is $got, expected $NEXT"; exit 1; }
+          grep -A2 '^name = "taskbar-focus"$' Cargo.lock | grep -q "version = \"$NEXT\"" \
+            || { echo "::error::Cargo.lock was not updated to $NEXT"; exit 1; }
+
+      - name: Write the changelog section
+        if: steps.version.outputs.resume != 'true'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          previous=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)
+          if [ -n "$previous" ]; then range="$previous..HEAD"; else range="HEAD"; fi
+
+          grep -q '<!-- next-release -->' CHANGELOG.md \
+            || { echo "::error::CHANGELOG.md has lost its <!-- next-release --> marker"; exit 1; }
+
+          bash .github/scripts/changelog-section.sh "$NEXT" "$range" "$(date -u +%F)" \
+            > "$RUNNER_TEMP/section.md"
+          if [ -n "$previous" ]; then
+            printf '\n**Full changelog**: https://github.com/%s/compare/%s...v%s\n' \
+              "$GITHUB_REPOSITORY" "$previous" "$NEXT" >> "$RUNNER_TEMP/section.md"
+          fi
+
+          SECTION="$RUNNER_TEMP/section.md" perl -0pi -e '
+            open my $f, "<", $ENV{SECTION} or die;
+            local $/; my $s = <$f>;
+            s/<!-- next-release -->\n/<!-- next-release -->\n\n$s/;
+          ' CHANGELOG.md
+
+          echo "--- CHANGELOG.md now starts ---"
+          head -30 CHANGELOG.md
+
+      - name: Commit and tag
+        if: steps.version.outputs.resume != 'true'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git commit -m "Release $NEXT"
+          git tag -a "v$NEXT" -m "taskbar-focus v$NEXT"
+
+          # --atomic so the branch and the tag land together. As two pushes,
+          # a failure between them leaves main bumped with no tag to release,
+          # which the next run cannot tell from a fresh bump.
+          git push --atomic origin HEAD:main "v$NEXT"
+
+      - name: Say so on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          NEXT: ${{ steps.version.outputs.next }}
+          LEVEL: ${{ steps.level.outputs.level }}
+        run: |
+          gh pr comment "$PR" --body \
+            "Released as **v$NEXT** (\`$LEVEL\` bump). Build and publish: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  # Tags pushed with GITHUB_TOKEN do not start other workflow runs, so the
+  # release is called directly rather than left to release.yml's tag trigger.
+  release:
+    needs: bump
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.bump.outputs.tag }}
+    secrets: inherit

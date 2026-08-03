@@ -43,6 +43,8 @@ const ID_RESTORE_SESSION: usize = 114;
 const ID_WAKE: usize = 115;
 
 const ID_DND: usize = 120;
+const ID_MUTE_TRAY: usize = 122;
+const ID_MUTE_WINDOW: usize = 123;
 const ID_MINI: usize = 131;
 const ID_TOPMOST: usize = 132;
 
@@ -642,6 +644,36 @@ unsafe fn build(hwnd: HWND, st: &State, cfg: &Config) {
          applying your own priority list, which this app never touches.",
         3,
     );
+    check(
+        hwnd,
+        &mut right,
+        st,
+        "Add a separate bell beside the clock",
+        ID_MUTE_TRAY,
+        cfg.dnd.mute_tray_icon,
+        "A second notification-area icon that appears only while notifications \
+         are muted. Windows 11 hides new icons behind the ^ arrow; drag it out \
+         once and it stays put.",
+    );
+    check(
+        hwnd,
+        &mut right,
+        st,
+        "Show a muted bell in the timer window",
+        ID_MUTE_WINDOW,
+        cfg.dnd.mute_window,
+        "Draws the crossed-out bell next to the countdown in the compact timer \
+         window, if you have that window switched on.",
+    );
+    note(
+        hwnd,
+        &mut right,
+        st,
+        "Windows only shows its muted icon for changes made by the taskbar. \
+         These options draw the same crossed-out bell instead. The timer icon \
+         remains dedicated to progress because it cannot show both legibly.",
+        4,
+    );
     right.end();
 
     right.begin(hwnd, st, " Timer window ");
@@ -931,6 +963,8 @@ unsafe fn collect(hwnd: HWND, st: &mut State, save_as_new: bool) -> Result<Confi
     };
 
     cfg.dnd.enabled = checked(hwnd, ID_DND);
+    cfg.dnd.mute_tray_icon = checked(hwnd, ID_MUTE_TRAY);
+    cfg.dnd.mute_window = checked(hwnd, ID_MUTE_WINDOW);
     cfg.display.mini_window = checked(hwnd, ID_MINI);
     cfg.display.always_on_top = checked(hwnd, ID_TOPMOST);
 
@@ -999,6 +1033,8 @@ unsafe fn restore_defaults(hwnd: HWND, st: &mut State) {
         (ID_STRICT, d.behavior.strict_focus),
         (ID_RESTORE_SESSION, d.behavior.restore_session_on_restart),
         (ID_DND, d.dnd.enabled),
+        (ID_MUTE_TRAY, d.dnd.mute_tray_icon),
+        (ID_MUTE_WINDOW, d.dnd.mute_window),
         (ID_MINI, d.display.mini_window),
         (ID_TOPMOST, d.display.always_on_top),
         (ID_NOTIFY, d.notifications.enabled),

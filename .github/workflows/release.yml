@@ -1,10 +1,22 @@
 name: Release
 
-# Tag a commit to publish it:  git tag v0.1.0 && git push origin v0.1.0
+# Normally called by release-on-merge.yml once it has tagged the commit. The
+# tag trigger stays so a release can still be cut by hand:
+#   git tag v0.1.0 && git push origin v0.1.0
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, for example v0.2.0"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: write # create the GitHub Release
@@ -14,8 +26,13 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
 
       - name: Set up toolchain
         run: |
@@ -28,7 +45,7 @@ jobs:
       - name: Check the tag matches Cargo.toml
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}" -replace '^v',''
+          $tag = $env:TAG -replace '^v',''
           $line = Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
           $manifest = $line.Matches[0].Groups[1].Value
           if ($tag -ne $manifest) {
@@ -43,12 +60,14 @@ jobs:
         run: cargo build --release --locked
 
       - name: Stage artifacts and hash them
+        id: stage
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target\release\taskbar-focus.exe dist\
           $h = (Get-FileHash dist\taskbar-focus.exe -Algorithm SHA256).Hash.ToLower()
           "$h *taskbar-focus.exe" | Set-Content dist\SHA256SUMS.txt -Encoding ascii
+          "hash=$h" | Add-Content $env:GITHUB_OUTPUT
           Write-Host "SHA-256: $h"
 
       # Attestations need a public repository on Free/Pro/Team plans; only
@@ -66,37 +85,85 @@ jobs:
         run: |
           Write-Host "::notice::Repository is private, so no build provenance attestation was created. Make it public to enable them."
 
-      - name: Update the Scoop manifest
-        shell: pwsh
-        run: |
-          $version = "${{ github.ref_name }}" -replace '^v',''
-          $hash = (Get-FileHash dist\taskbar-focus.exe -Algorithm SHA256).Hash.ToLower()
-          $path = 'bucket\taskbar-focus.json'
-          $m = Get-Content $path -Raw | ConvertFrom-Json
-          $m.version = $version
-          $m.architecture.'64bit'.url =
-            "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/taskbar-focus.exe#/taskbar-focus.exe"
-          $m.architecture.'64bit'.hash = $hash
-          $m | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding utf8
-          Copy-Item $path dist\
-          Write-Host "manifest updated to $version / $hash"
-
-      - name: Commit the updated manifest
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bucket/taskbar-focus.json
-          if (git diff --cached --quiet) { Write-Host "manifest unchanged" ; exit 0 }
-          git commit -m "scoop: ${{ github.ref_name }}"
-          git push origin HEAD:main
-
-      - name: Publish release
+      # Written onto main rather than onto the detached tag checkout. Rebuilt
+      # from a fresh origin/main on every attempt, because anything else landing
+      # on main between the fetch and the push rejects it as non-fast-forward.
+      - name: Update the Scoop manifest on main
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          HASH: ${{ steps.stage.outputs.hash }}
         run: |
+          $version = $env:TAG -replace '^v',''
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          $done = $false
+          foreach ($attempt in 1..5) {
+            git fetch origin main
+            git checkout -B main origin/main
+            git reset --hard origin/main
+
+            $path = 'bucket\taskbar-focus.json'
+            $m = Get-Content $path -Raw | ConvertFrom-Json
+            $m.version = $version
+            $m.architecture.'64bit'.url =
+              "https://github.com/${{ github.repository }}/releases/download/$env:TAG/taskbar-focus.exe#/taskbar-focus.exe"
+            $m.architecture.'64bit'.hash = $env:HASH
+            $m | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding utf8
+            Copy-Item $path dist\ -Force
+
+            git add $path
+            if (git diff --cached --quiet) {
+              Write-Host "manifest already up to date on main"
+              $done = $true
+              break
+            }
+
+            git commit -m "scoop: $env:TAG"
+            git push origin main
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "manifest updated to $version / $env:HASH"
+              $done = $true
+              break
+            }
+            Write-Host "::notice::main moved under us; refetching and retrying ($attempt of 5)."
+          }
+
+          if (-not $done) {
+            throw "could not push the Scoop manifest to main after 5 attempts"
+          }
+
+          # Back to the tag, so the later steps - crates.io above all - see the
+          # source that was actually tagged rather than whatever main holds now.
+          git checkout --detach $env:TAG
+
+      - name: Build the release notes
+        shell: pwsh
+        run: |
+          $version = $env:TAG -replace '^v',''
+          $changelog = ''
+          if (Test-Path CHANGELOG.md) {
+            $lines = Get-Content CHANGELOG.md
+            $start = ($lines | Select-String -Pattern ("^## \[" + [regex]::Escape($version) + "\]") | Select-Object -First 1).LineNumber
+            if ($start -and $start -lt $lines.Count) {
+              $rest = @($lines[$start..($lines.Count - 1)])
+              $end = ($rest | Select-String -Pattern '^## \[' | Select-Object -First 1).LineNumber
+              if ($end) { $rest = $rest[0..($end - 2)] }
+              $changelog = ($rest -join "`n").Trim()
+            }
+          }
+          if (-not $changelog) { $changelog = '_No changelog section found for this version._' }
+
           $notes = @"
+          $changelog
+
+          ## Install
+
+          ``````
+          scoop bucket add taskbar-focus https://github.com/${{ github.repository }}
+          scoop install taskbar-focus
+          ``````
+
           ## Verifying this download
 
           This binary is built by GitHub Actions from the tagged commit. If the repository is public it also carries a build provenance attestation:
@@ -117,10 +184,17 @@ jobs:
           Run ``taskbar-focus.exe --explain`` to see exactly what it touches, and see
           the README.
           "@
-          gh release create "${{ github.ref_name }}" `
+          $notes | Set-Content dist\NOTES.md -Encoding utf8
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:TAG `
             dist/taskbar-focus.exe dist/SHA256SUMS.txt dist/taskbar-focus.json `
-            --title "taskbar-focus ${{ github.ref_name }}" `
-            --notes $notes
+            --title "taskbar-focus $env:TAG" `
+            --notes-file dist/NOTES.md
 
       # Last, because it is the only irreversible step: a crates.io version can
       # be yanked but never replaced or removed. If it fails, everything else
@@ -135,7 +209,7 @@ jobs:
             exit 0
           }
 
-          $version = "${{ github.ref_name }}" -replace '^v',''
+          $version = $env:TAG -replace '^v',''
           try {
             $crate = Invoke-RestMethod "https://crates.io/api/v1/crates/taskbar-focus" `
               -Headers @{ 'User-Agent' = 'taskbar-focus-release' } -ErrorAction Stop

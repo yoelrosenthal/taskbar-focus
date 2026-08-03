@@ -82,6 +82,26 @@ impl Key {
         }
     }
 
+    pub fn get_u32(&self, value: &str) -> Option<u32> {
+        let v = wide(value);
+        let mut data = 0u32;
+        let mut size = std::mem::size_of_val(&data) as u32;
+        let mut ty = REG_VALUE_TYPE::default();
+        unsafe {
+            RegQueryValueExW(
+                self.0,
+                PCWSTR(v.as_ptr()),
+                None,
+                Some(&mut ty),
+                Some(std::ptr::from_mut(&mut data).cast()),
+                Some(&mut size),
+            )
+            .ok()
+            .ok()?;
+        }
+        (ty == REG_DWORD && size == std::mem::size_of_val(&data) as u32).then_some(data)
+    }
+
     pub fn set_binary(&self, value: &str, data: &[u8]) -> bool {
         let v = wide(value);
         unsafe { RegSetValueExW(self.0, PCWSTR(v.as_ptr()), None, REG_BINARY, Some(data)) }.is_ok()

@@ -9,6 +9,8 @@
 Work in 25-minute stretches. While you're focused, Windows goes quiet.
 When you take a break, everything comes back.
 
+*A Windows application. Needs Windows 10 or 11, 64-bit.*
+
 </div>
 
 ---
@@ -64,6 +66,23 @@ it switches off. That's the whole point of the app.
 Your **priority** apps and contacts still get through — it uses exactly the mode
 Windows' own "Do not disturb" button uses, and never touches your priority list.
 
+### A muted bell, because Windows will not draw one
+
+Windows only lights its own muted icon for a change the taskbar made itself, so
+muting from another program usually leaves no visible trace. This app draws that
+trace instead — the same crossed-out bell — and it follows Do Not Disturb however
+it was switched on, including by you.
+
+- a **separate bell beside the clock**, present only while you are muted
+- a **bell in the compact timer window**, next to the countdown
+
+Both are on by default and can be switched independently under *Do Not Disturb*
+in Settings. Windows 11 files new tray icons behind the `^` arrow — drag the bell
+out once and it stays where you put it.
+
+The timer's tray icon is left alone: sixteen pixels hold a progress ring or a
+bell, not both.
+
 ### A tray icon that shows progress
 
 | | |
@@ -86,9 +105,10 @@ They work from any app, and you can change them in Settings.
 
 ## How a session flows
 
-Finish a focus session → a short break starts by itself → after four sessions
-you get a long break instead. Breaks end by going idle, so *you* decide when to
-start working again.
+Finish a focus session → a short break starts by itself → after a set number of
+sessions you get a long break instead. Four in Pomodoro 25/5, two in Deep Work
+90/15, and you can change it per preset. Breaks end by going idle, so *you*
+decide when to start working again.
 
 Don't like that? Turn the automatic sequence off and drive it by hand.
 
@@ -127,10 +147,11 @@ works without the app running. Everything it does is logged to
 rather than turning off your protection. Or switch off **Mute notifications
 during focus** and use it as a plain timer.
 
-**Windows' moon icon may not appear.** Notifications really are muted, but the
-indicator beside the clock often doesn't update, because that part of the
-taskbar is drawn by Explorer and it caches the state. Use the app's own signals:
-the tray icon turns red, and Settings says *notifications muted*.
+**Windows' own muted icon usually will not appear.** Notifications really are
+muted, but the area beside the clock is drawn by Explorer, which caches that
+state and does not update without being restarted. Restarting the desktop for an
+icon is unreasonable, so the app draws
+[its own mark](#a-muted-bell-because-windows-will-not-draw-one) instead.
 
 **Your settings** live in `%APPDATA%\taskbar-focus\config.toml` — plain text you
 can back up, sync or edit by hand.
@@ -142,8 +163,6 @@ time you were away deducted. Explorer restarted? The tray icon reappears.
 
 **Privacy.** No network access at all — there's no networking code in it. No
 telemetry, no accounts, no auto-update. It never needs administrator rights.
-
-**Needs** Windows 10 or 11, 64-bit.
 
 ## Uninstall
 
@@ -161,9 +180,15 @@ cargo test
 cargo install --path .       # install your local build
 ```
 
-Push a tag (`git tag v0.1.0 && git push origin v0.1.0`) and GitHub Actions
-builds the release, attaches a build provenance attestation, updates the Scoop
-manifest and publishes to crates.io. The tag must match the version in
+Merging a pull request into `main` publishes a release: GitHub Actions bumps the
+version, writes the `CHANGELOG.md` entry, tags the commit, builds, attaches a
+build provenance attestation, updates the Scoop manifest and publishes to
+crates.io. How big the bump is comes from a `release:major`, `release:minor` or
+`release:patch` label on the pull request; `release:skip` merges without
+releasing.
+
+Pushing a tag by hand (`git tag v0.2.0 && git push origin v0.2.0`) still works,
+for re-cutting a release. Either way the tag must match the version in
 `Cargo.toml` — the workflow checks this first and stops if it doesn't.
 
 Publishing to crates.io needs a `CARGO_REGISTRY_TOKEN` repository secret (from

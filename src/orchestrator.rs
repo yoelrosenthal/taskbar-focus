@@ -50,7 +50,18 @@ pub struct Orchestrator {
     /// "Do Not Disturb is on" when the app had not touched anything was simply
     /// misleading.
     dnd_engaged: bool,
+    /// Whether notifications are being suppressed right now, for the muted
+    /// indicator. Cached because it is read from the system, not from us.
+    dnd_active: bool,
+    /// Ticks to wait before reading the system state again.
+    dnd_poll_in: u32,
 }
+
+/// How often the live Do Not Disturb state is re-read, in ticks - every two
+/// seconds at the UI's twice-a-second tick. The mark has no reason to be more
+/// responsive than that, and the state can also change behind our back when the
+/// user toggles Do Not Disturb themselves.
+const DND_POLL_TICKS: u32 = 4;
 
 impl Orchestrator {
     pub fn new(config: Config, timer: Timer, dnd: DndWorker) -> Self {
@@ -61,6 +72,8 @@ impl Orchestrator {
             dnd,
             dnd_note: None,
             dnd_engaged: false,
+            dnd_active: false,
+            dnd_poll_in: 0,
         }
     }
 
@@ -85,6 +98,29 @@ impl Orchestrator {
 
     pub fn dnd_note(&self) -> Option<&str> {
         self.dnd_note.as_deref()
+    }
+
+    /// Are notifications actually being suppressed at this moment?
+    ///
+    /// This is what the muted mark draws, and it deliberately reports the
+    /// *system* state rather than [`Self::dnd_status`]'s "did we do it": a user
+    /// who switched Do Not Disturb on themselves is just as muted, and Windows
+    /// will not show them an indicator for it either while this app is running
+    /// its own. Falls back to our own bookkeeping when the state cannot be read.
+    pub fn dnd_active(&self) -> bool {
+        self.dnd_active
+    }
+
+    /// Re-read the live Do Not Disturb state.
+    ///
+    /// Skipped entirely when no indicator is switched on, so a user who wants
+    /// nothing to do with the undocumented read simply does not get one.
+    fn poll_dnd(&mut self) {
+        self.dnd_active = if self.config.dnd.wants_indicator() {
+            crate::os::dnd::wnf::query().map_or(self.dnd_engaged, |state| state.is_on())
+        } else {
+            self.dnd_engaged
+        };
     }
 
     /// Translate a CLI/UI command into timer input.
@@ -119,6 +155,13 @@ impl Orchestrator {
     pub fn tick(&mut self) -> Vec<UiEvent> {
         let elapsed = self.clock.tick(self.config.behavior.wake_policy);
         let mut out = Vec::new();
+
+        if self.dnd_poll_in == 0 {
+            self.poll_dnd();
+            self.dnd_poll_in = DND_POLL_TICKS;
+        } else {
+            self.dnd_poll_in -= 1;
+        }
 
         if let Some(slept) = elapsed.slept {
             if self.config.behavior.wake_policy == WakePolicy::Pause
@@ -172,6 +215,9 @@ impl Orchestrator {
                 }
             }
             out.push(UiEvent::Refresh);
+        }
+        if !out.is_empty() {
+            self.poll_dnd();
         }
         out
     }

@@ -132,11 +132,33 @@ pub struct DndSettings {
     /// Offering them as switches invited people to turn the feature off without
     /// realising it.
     pub enabled: bool,
+
+    /// Show the mark as a separate notification-area icon while muted, as
+    /// close to Windows' own indicator as an ordinary program can get: its own
+    /// icon beside the clock, present only while muted.
+    ///
+    /// The timer tray icon remains dedicated to progress because it cannot show
+    /// both clearly at sixteen pixels; see `ui::icon`.
+    pub mute_tray_icon: bool,
+
+    /// Draw the mark beside the countdown in the compact timer window.
+    pub mute_window: bool,
 }
 
 impl Default for DndSettings {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            mute_tray_icon: true,
+            mute_window: true,
+        }
+    }
+}
+
+impl DndSettings {
+    /// Whether any muted-state indicator is enabled.
+    pub fn wants_indicator(&self) -> bool {
+        self.mute_tray_icon || self.mute_window
     }
 }
 
