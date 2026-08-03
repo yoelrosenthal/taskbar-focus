@@ -10,6 +10,20 @@ request is merged into `main`; there is no need to edit them by hand.
 
 <!-- next-release -->
 
+## [0.2.0] - 2026-08-03
+
+### Changed
+
+- Harden the release workflow against partial failures
+- Drop the muted bell on the application icon
+- Update the application icon
+- Release automatically when a pull request is merged
+- Trim the Windows-only note back to one line
+- Say plainly in the README that this is Windows-only
+- Show a muted-bell indicator while Do Not Disturb is on
+
+**Full changelog**: https://github.com/yoelrosenthal/taskbar-focus/compare/v0.1.0...v0.2.0
+
 ## [0.1.0] - 2026-07-31
 
 ### Added
