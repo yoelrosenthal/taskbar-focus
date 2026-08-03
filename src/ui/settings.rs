@@ -11,8 +11,9 @@
 //! or everything matching the search box - and stacks them down the pane. That
 //! is what lets the search box reach across pages without rebuilding anything.
 //!
-//! The pane paints a card behind each setting itself. Windows has no control
-//! for that, and grouping the rows this way is what keeps a long page readable.
+//! The pane paints the cards, and the icon at the left of each one, itself.
+//! Windows has no control for either, and grouping the rows this way is what
+//! keeps a long page readable.
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -20,8 +21,8 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontIndirectW, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW,
     EndPaint, FillRect, GetSysColor, GetSysColorBrush, InvalidateRect, RoundRect, SelectObject,
     SetBkMode, SetTextColor, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT,
-    DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HPEN, LOGFONTW,
-    PAINTSTRUCT, PS_SOLID, TRANSPARENT,
+    DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC,
+    HFONT, HPEN, LOGFONTW, PAINTSTRUCT, PS_SOLID, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemServices::{SS_ENDELLIPSIS, SS_ETCHEDHORZ};
@@ -137,7 +138,20 @@ const CAP_W: i32 = 150;
 const CARD_X: i32 = 12;
 /// Space above and below the contents of a card.
 const CARD_Y: i32 = 11;
+/// The column an icon occupies at the left of a card, gap included.
+const ICON_W: i32 = 30;
 const H: i32 = 22;
+
+/// The icon for each page, in the same order as [`PAGES`].
+const PAGE_ICONS: [&str; 7] = [
+    "\u{23F1}",
+    "\u{1F345}",
+    "\u{1F514}",
+    "\u{1F319}",
+    "\u{1F50A}",
+    "\u{1F5A5}",
+    "\u{2328}",
+];
 
 /// What a row in the settings pane looks like, which decides how it is laid
 /// out and whether the search box can match it.
@@ -181,6 +195,8 @@ struct Item {
     caption: HWND,
     /// The grey one-liner under the control, otherwise invalid.
     desc: HWND,
+    /// The glyph drawn in the card's icon column. Empty for rows with no card.
+    icon: &'static str,
     /// Extra left inset, used to nest options under the switch that governs
     /// them.
     indent: i32,
@@ -194,11 +210,20 @@ struct Item {
     search: String,
 }
 
+/// A card to paint behind a row, in content coordinates, with the glyph that
+/// belongs in its icon column.
+struct Card {
+    rect: RECT,
+    icon: &'static str,
+}
+
 struct State {
     app: *mut App,
     font: HFONT,
     bold: HFONT,
     title: HFONT,
+    /// Segoe UI Emoji, for the glyph at the left of every card and page.
+    icons: HFONT,
     tooltip: HWND,
     /// The scrolling container holding every setting.
     pane: HWND,
@@ -211,9 +236,9 @@ struct State {
     accent: HBRUSH,
     accent_pen: HPEN,
     items: Vec<Item>,
-    /// The card behind each visible row, in content coordinates. Empty for
-    /// rows that are hidden or that have no card.
-    cards: Vec<RECT>,
+    /// The card behind each visible row, in content coordinates. Rows that are
+    /// hidden, or that have no card, are not in here.
+    cards: Vec<Card>,
     page: usize,
     scroll: i32,
     /// Height of the currently laid out page, for the scroll range.
@@ -297,13 +322,14 @@ pub fn open(owner: HWND, app: *mut App) -> Option<HWND> {
             .position(|p| p.name == config.preset().name)
             .unwrap_or(0);
 
-        let (font, bold, title_font) = gui_fonts();
+        let (font, bold, title_font, icon_font) = gui_fonts();
         let accent = COLORREF(GetSysColor(COLOR_HIGHLIGHT));
         let ptr = Box::into_raw(Box::new(State {
             app,
             font,
             bold,
             title: title_font,
+            icons: icon_font,
             tooltip: make_tooltip(hwnd),
             pane,
             sidebar: CreateSolidBrush(COLORREF(SIDEBAR_BG)),
@@ -335,9 +361,13 @@ pub fn open(owner: HWND, app: *mut App) -> Option<HWND> {
     }
 }
 
-/// The standard UI font, a bold variant for section captions and a larger bold
-/// one for the page title.
-fn gui_fonts() -> (HFONT, HFONT, HFONT) {
+/// The standard UI font, a bold variant for section captions, a larger one for
+/// the page title, and Segoe UI Emoji for the icons.
+///
+/// GDI draws Segoe UI Emoji as its monochrome outlines rather than in colour -
+/// colour layers need DirectWrite - which suits a settings window better than
+/// full-colour emoji would.
+fn gui_fonts() -> (HFONT, HFONT, HFONT, HFONT) {
     unsafe {
         let mut ncm = NONCLIENTMETRICSW {
             cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
@@ -360,11 +390,24 @@ fn gui_fonts() -> (HFONT, HFONT, HFONT) {
         let mut title_lf = lf;
         title_lf.lfWeight = 600;
         title_lf.lfHeight = title_lf.lfHeight * 3 / 2;
+        let mut icon_lf = lf;
+        icon_lf.lfWeight = 400;
+        icon_lf.lfHeight = icon_lf.lfHeight * 7 / 5;
+        set_face(&mut icon_lf, "Segoe UI Emoji");
         (
             CreateFontIndirectW(&lf),
             CreateFontIndirectW(&bold_lf),
             CreateFontIndirectW(&title_lf),
+            CreateFontIndirectW(&icon_lf),
         )
+    }
+}
+
+/// Name the typeface a font description asks for.
+fn set_face(lf: &mut LOGFONTW, name: &str) {
+    lf.lfFaceName = [0; 32];
+    for (slot, ch) in lf.lfFaceName.iter_mut().zip(name.encode_utf16()) {
+        *slot = ch;
     }
 }
 
@@ -504,6 +547,7 @@ impl Rows {
             h,
             HWND::default(),
             HWND::default(),
+            "",
             0,
             20,
             0,
@@ -513,17 +557,34 @@ impl Rows {
         );
     }
 
-    unsafe fn check(&mut self, id: usize, label: &str, on: bool, desc: &str, help: &str) {
-        self.check_at(0, id, label, on, desc, help);
+    unsafe fn check(
+        &mut self,
+        icon: &'static str,
+        id: usize,
+        label: &str,
+        on: bool,
+        desc: &str,
+        help: &str,
+    ) {
+        self.check_at(icon, 0, id, label, on, desc, help);
     }
 
     /// A checkbox nested under the switch above it.
-    unsafe fn sub_check(&mut self, id: usize, label: &str, on: bool, help: &str) {
-        self.check_at(22, id, label, on, "", help);
+    unsafe fn sub_check(
+        &mut self,
+        icon: &'static str,
+        id: usize,
+        label: &str,
+        on: bool,
+        help: &str,
+    ) {
+        self.check_at(icon, 22, id, label, on, "", help);
     }
 
+    #[allow(clippy::too_many_arguments)]
     unsafe fn check_at(
         &mut self,
+        icon: &'static str,
         indent: i32,
         id: usize,
         label: &str,
@@ -556,6 +617,7 @@ impl Rows {
             h,
             HWND::default(),
             d,
+            icon,
             indent,
             20,
             0,
@@ -565,7 +627,15 @@ impl Rows {
         );
     }
 
-    unsafe fn field(&mut self, id: usize, label: &str, value: &str, desc: &str, help: &str) {
+    unsafe fn field(
+        &mut self,
+        icon: &'static str,
+        id: usize,
+        label: &str,
+        value: &str,
+        desc: &str,
+        help: &str,
+    ) {
         let e = ctl(
             self.pane,
             WC_EDITW,
@@ -581,12 +651,14 @@ impl Rows {
         tip(self.tooltip, e, help);
         let c = self.caption(label);
         let d = self.description(desc);
-        self.push(Kind::Field, e, c, d, 0, H, 0, label, desc, help);
+        self.push(Kind::Field, e, c, d, icon, 0, H, 0, label, desc, help);
     }
 
     /// A drop-down. `options` are added in order and `selected` is preselected.
+    #[allow(clippy::too_many_arguments)]
     unsafe fn combo(
         &mut self,
+        icon: &'static str,
         id: usize,
         label: &str,
         options: &[&str],
@@ -619,7 +691,7 @@ impl Rows {
         tip(self.tooltip, h, help);
         let c = self.caption(label);
         let d = self.description(desc);
-        self.push(Kind::Field, h, c, d, 0, 200, 0, label, desc, help);
+        self.push(Kind::Field, h, c, d, icon, 0, 200, 0, label, desc, help);
     }
 
     unsafe fn note(&mut self, text: &str, lines: i32) {
@@ -641,6 +713,7 @@ impl Rows {
             h,
             HWND::default(),
             HWND::default(),
+            "",
             0,
             15 * lines,
             lines,
@@ -694,6 +767,7 @@ impl Rows {
         hwnd: HWND,
         caption: HWND,
         desc: HWND,
+        icon: &'static str,
         indent: i32,
         ctl_h: i32,
         lines: i32,
@@ -718,6 +792,7 @@ impl Rows {
             hwnd,
             caption,
             desc,
+            icon,
             indent,
             ctl_h,
             lines,
@@ -799,9 +874,9 @@ unsafe fn build(hwnd: HWND, st: &mut State, cfg: &Config) {
         WC_STATICW,
         PAGES[0],
         WINDOW_STYLE(WS_VISIBLE.0),
-        CONTENT_X,
+        CONTENT_X + 34,
         PAD + 2,
-        PANE_W,
+        PANE_W - 34,
         26,
         ID_TITLE,
         st.title,
@@ -909,6 +984,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_TIMER, "Preset");
     r.combo(
+        "\u{1F4CB}",
         ID_PRESET,
         "Preset",
         &names,
@@ -918,6 +994,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
          change this preset, or Save as new preset to keep both.",
     );
     r.field(
+        "\u{1F3F7}",
         ID_NAME,
         "Preset name",
         &p.name,
@@ -927,6 +1004,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_TIMER, "Lengths");
     r.field(
+        "\u{1F3AF}",
         ID_FOCUS,
         "Focus (minutes)",
         &num(p.focus_minutes),
@@ -934,6 +1012,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "How long one focus session lasts.",
     );
     r.field(
+        "\u{2615}",
         ID_SHORT,
         "Short break (minutes)",
         &num(p.short_break_minutes),
@@ -941,6 +1020,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "The break taken after most focus sessions.",
     );
     r.field(
+        "\u{1F6CB}",
         ID_LONG,
         "Long break (minutes)",
         &num(p.long_break_minutes),
@@ -948,6 +1028,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "The longer break taken after every Nth focus session.",
     );
     r.field(
+        "\u{1F522}",
         ID_SESSIONS,
         "Sessions per long break",
         &p.sessions_before_long_break.to_string(),
@@ -957,6 +1038,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_SEQUENCE, "Automatic sequence");
     r.check(
+        "\u{1F345}",
         ID_SEQUENCE,
         "Run the Pomodoro sequence",
         cfg.behavior.sequence_enabled,
@@ -964,12 +1046,14 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "Master switch for focus, break and long break running one after another.",
     );
     r.sub_check(
+        "\u{2615}",
         ID_AUTO_BREAK,
         "Start a break when focus ends",
         cfg.behavior.auto_start_break,
         "When a focus session completes, begin the break automatically.",
     );
     r.sub_check(
+        "\u{1F3AF}",
         ID_AUTO_FOCUS,
         "Start focus when a break ends",
         cfg.behavior.auto_start_focus,
@@ -979,6 +1063,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_SEQUENCE, "Interruptions");
     r.check(
+        "\u{1F512}",
         ID_STRICT,
         "Strict focus",
         cfg.behavior.strict_focus,
@@ -987,6 +1072,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
          so a stray click cannot end it. Breaks are never guarded.",
     );
     r.check(
+        "\u{267B}",
         ID_RESTORE_SESSION,
         "Restore an interrupted session on restart",
         cfg.behavior.restore_session_on_restart,
@@ -994,6 +1080,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "If the app closes mid-session, bring the remaining time back next time it starts.",
     );
     r.combo(
+        "\u{1F4A4}",
         ID_WAKE,
         "After sleep",
         &[
@@ -1013,6 +1100,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_NOTIFICATIONS, "Windows notifications");
     r.check(
+        "\u{1F514}",
         ID_NOTIFY,
         "Show notifications",
         cfg.notifications.enabled,
@@ -1020,24 +1108,28 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "Turn this off to make the app silent in the notification centre.",
     );
     r.sub_check(
+        "\u{1F3AF}",
         ID_N_FS,
         "Focus started",
         cfg.notifications.events.focus_start,
         "Notify when a focus session begins.",
     );
     r.sub_check(
+        "\u{1F3C1}",
         ID_N_FE,
         "Focus ended",
         cfg.notifications.events.focus_end,
         "Notify when a focus session completes.",
     );
     r.sub_check(
+        "\u{2615}",
         ID_N_BS,
         "Break started",
         cfg.notifications.events.break_start,
         "Notify when a break begins.",
     );
     r.sub_check(
+        "\u{23F0}",
         ID_N_BE,
         "Break ended",
         cfg.notifications.events.break_end,
@@ -1046,6 +1138,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_DND, "Muting");
     r.check(
+        "\u{1F319}",
         ID_DND,
         "Mute notifications during focus",
         cfg.dnd.enabled,
@@ -1060,6 +1153,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_DND, "Muted indicator");
     r.check(
+        "\u{1F515}",
         ID_MUTE_TRAY,
         "Add a separate bell beside the clock",
         cfg.dnd.mute_tray_icon,
@@ -1068,6 +1162,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
          stays put.",
     );
     r.check(
+        "\u{1F5A5}",
         ID_MUTE_WINDOW,
         "Show a muted bell in the timer window",
         cfg.dnd.mute_window,
@@ -1084,6 +1179,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_SOUNDS, "Sound cues");
     r.check(
+        "\u{1F507}",
         ID_MUTE,
         "Mute all sounds",
         cfg.sounds.muted,
@@ -1091,24 +1187,28 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "Silences every cue without forgetting which ones you had chosen.",
     );
     r.sub_check(
+        "\u{1F3AF}",
         ID_S_FS,
         "Focus started",
         cfg.sounds.events.focus_start,
         "Play a cue when a focus session begins.",
     );
     r.sub_check(
+        "\u{1F3C1}",
         ID_S_FE,
         "Focus ended",
         cfg.sounds.events.focus_end,
         "Play a cue when a focus session completes.",
     );
     r.sub_check(
+        "\u{2615}",
         ID_S_BS,
         "Break started",
         cfg.sounds.events.break_start,
         "Play a cue when a break begins.",
     );
     r.sub_check(
+        "\u{23F0}",
         ID_S_BE,
         "Break ended",
         cfg.sounds.events.break_end,
@@ -1117,6 +1217,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_WINDOW, "Compact timer");
     r.check(
+        "\u{1F5A5}",
         ID_MINI,
         "Show the compact timer window",
         cfg.display.mini_window,
@@ -1125,6 +1226,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
          or make it large. Click it to start or pause.",
     );
     r.check(
+        "\u{1F4CC}",
         ID_TOPMOST,
         "Keep it above other windows",
         cfg.display.always_on_top,
@@ -1138,6 +1240,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_HOTKEYS, "Global hotkeys");
     r.check(
+        "\u{2328}",
         ID_HOTKEYS,
         "Enable global hotkeys",
         cfg.hotkeys.enabled,
@@ -1145,6 +1248,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "If another program already owns a combination, you will be told.",
     );
     r.field(
+        "\u{23EF}",
         ID_HK_TOGGLE,
         "Start / pause",
         &cfg.hotkeys.toggle,
@@ -1152,6 +1256,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "A modifier is required.",
     );
     r.field(
+        "\u{23ED}",
         ID_HK_SKIP,
         "Skip to next",
         &cfg.hotkeys.skip,
@@ -1193,8 +1298,11 @@ unsafe fn relayout(hwnd: HWND, st: &mut State) {
         }
         let (next, card) = place(it, y);
         y = next;
-        if let Some(rc) = card {
-            cards.push(rc);
+        if let Some(rect) = card {
+            cards.push(Card {
+                rect,
+                icon: it.icon,
+            });
         }
     }
     st.cards = cards;
@@ -1225,8 +1333,14 @@ unsafe fn relayout(hwnd: HWND, st: &mut State) {
     if let Ok(h) = GetDlgItem(Some(hwnd), ID_TITLE as i32) {
         let t = wide(heading);
         let _ = SetWindowTextW(h, t.as_pcwstr());
-        let _ = InvalidateRect(Some(h), None, true);
     }
+    let strip = RECT {
+        left: SIDEBAR_W,
+        top: 0,
+        right: CLIENT_W,
+        bottom: PANE_Y,
+    };
+    let _ = InvalidateRect(Some(hwnd), Some(&strip), true);
 
     st.scroll = 0;
     set_scroll_range(st);
@@ -1252,8 +1366,8 @@ unsafe fn place(it: &Item, y: i32) -> (i32, Option<RECT>) {
     };
     let left = it.indent;
     let width = ITEM_W - it.indent;
-    let inner_x = left + CARD_X;
-    let inner_w = width - CARD_X * 2;
+    let inner_x = left + CARD_X + ICON_W;
+    let inner_w = width - CARD_X * 2 - ICON_W;
     let card = |top: i32, bottom: i32| RECT {
         left,
         top,
@@ -1297,7 +1411,8 @@ unsafe fn place(it: &Item, y: i32) -> (i32, Option<RECT>) {
             (bottom + 6, Some(card(y, bottom)))
         }
         Kind::Note => {
-            show(it.hwnd, inner_x, y + 2, ITEM_W - CARD_X * 2, 15 * it.lines);
+            let x = left + CARD_X;
+            show(it.hwnd, x, y + 2, ITEM_W - x - CARD_X, 15 * it.lines);
             (y + 15 * it.lines + 10, None)
         }
     }
@@ -1342,23 +1457,52 @@ unsafe fn scroll_to(st: &mut State, pos: i32) {
     set_scroll_range(st);
 }
 
-/// Paint the cards behind the rows currently on screen.
+/// Paint the cards behind the rows currently on screen, each with its icon.
 unsafe fn paint_cards(st: &State, hdc: HDC) {
     let old_pen = SelectObject(hdc, st.card_pen.into());
     let old_brush = SelectObject(hdc, st.card.into());
-    for rc in &st.cards {
+    for c in &st.cards {
         let _ = RoundRect(
             hdc,
-            rc.left,
-            rc.top - st.scroll,
-            rc.right,
-            rc.bottom - st.scroll,
+            c.rect.left,
+            c.rect.top - st.scroll,
+            c.rect.right,
+            c.rect.bottom - st.scroll,
             10,
             10,
         );
     }
     SelectObject(hdc, old_pen);
     SelectObject(hdc, old_brush);
+
+    let old_font = SelectObject(hdc, st.icons.into());
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, COLORREF(GetSysColor(COLOR_WINDOWTEXT)));
+    for c in &st.cards {
+        let top = c.rect.top - st.scroll + CARD_Y;
+        draw_icon(hdc, c.icon, c.rect.left + CARD_X, top, ICON_W - 8, 22);
+    }
+    SelectObject(hdc, old_font);
+}
+
+/// Draw one icon glyph, centred in the box it is given.
+unsafe fn draw_icon(hdc: HDC, icon: &str, x: i32, y: i32, w: i32, h: i32) {
+    if icon.is_empty() {
+        return;
+    }
+    let mut glyph: Vec<u16> = icon.encode_utf16().collect();
+    let mut rc = RECT {
+        left: x,
+        top: y,
+        right: x + w,
+        bottom: y + h,
+    };
+    DrawTextW(
+        hdc,
+        &mut glyph,
+        &mut rc,
+        DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX,
+    );
 }
 
 /// Draw one navigation entry: a rounded highlight and an accent bar for the
@@ -1397,11 +1541,24 @@ unsafe fn paint_nav_item(st: &State, dis: &DRAWITEMSTRUCT) {
     if n <= 0 {
         return;
     }
-    let old_font = SelectObject(dis.hDC, st.font.into());
     SetBkMode(dis.hDC, TRANSPARENT);
     SetTextColor(dis.hDC, COLORREF(GetSysColor(COLOR_WINDOWTEXT)));
+
+    let old_font = SelectObject(dis.hDC, st.icons.into());
+    draw_icon(
+        dis.hDC,
+        PAGE_ICONS
+            .get(dis.itemID as usize)
+            .copied()
+            .unwrap_or_default(),
+        rc.left + 12,
+        rc.top,
+        20,
+        rc.bottom - rc.top,
+    );
+    SelectObject(dis.hDC, st.font.into());
     let mut text_rc = RECT {
-        left: rc.left + 16,
+        left: rc.left + 40,
         top: rc.top,
         right: rc.right - 8,
         bottom: rc.bottom,
@@ -1764,6 +1921,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 },
                 st.page_bg,
             );
+            let old_font = SelectObject(hdc, st.icons.into());
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, COLORREF(GetSysColor(COLOR_WINDOWTEXT)));
+            let icon = if query(hwnd).is_empty() {
+                PAGE_ICONS[st.page]
+            } else {
+                "\u{1F50D}"
+            };
+            draw_icon(hdc, icon, CONTENT_X, PAD, 28, 28);
+            SelectObject(hdc, old_font);
             let _ = EndPaint(hwnd, &ps);
             LRESULT(0)
         }
@@ -1843,6 +2010,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let _ = DeleteObject(st.font.into());
             let _ = DeleteObject(st.bold.into());
             let _ = DeleteObject(st.title.into());
+            let _ = DeleteObject(st.icons.into());
             let _ = DeleteObject(st.sidebar.into());
             let _ = DeleteObject(st.page_bg.into());
             let _ = DeleteObject(st.card.into());
