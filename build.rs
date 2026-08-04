@@ -18,10 +18,7 @@ fn main() {
         let version = env!("CARGO_PKG_VERSION");
         let mut res = winresource::WindowsResource::new();
         res.set("ProductName", "taskbar-focus")
-            .set(
-                "FileDescription",
-                "Focus/Pomodoro timer for the Windows notification area",
-            )
+            .set("FileDescription", "Taskbar Focus")
             .set("CompanyName", "taskbar-focus contributors (open source)")
             .set(
                 "LegalCopyright",
