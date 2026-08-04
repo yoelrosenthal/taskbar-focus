@@ -278,7 +278,7 @@ pub fn open(owner: HWND, app: *mut App) -> Option<HWND> {
         };
         let _ = AdjustWindowRect(&mut rc, style, false);
 
-        let title = wide("taskbar-focus settings");
+        let title = wide("Taskbar-Focus Settings");
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             class.as_pcwstr(),
