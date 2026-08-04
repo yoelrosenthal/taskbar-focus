@@ -10,6 +10,14 @@ request is merged into `main`; there is no need to edit them by hand.
 
 <!-- next-release -->
 
+## [0.3.2] - 2026-08-04
+
+### Fixed
+
+- let focus-start notifications render before DND
+
+**Full changelog**: https://github.com/yoelrosenthal/taskbar-focus/compare/v0.3.1...v0.3.2
+
 ## [0.3.1] - 2026-08-04
 
 ### Fixed
