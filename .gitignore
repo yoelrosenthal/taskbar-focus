@@ -3,6 +3,7 @@
 **/*.rs.bk
 *.pdb
 CLAUDE.md
+AGENTS.md
 
 # Signing material - MUST NEVER be committed, especially to a public repo.
 # A leaked code-signing key lets anyone sign malware as you, and it cannot be
