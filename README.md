@@ -6,7 +6,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/taskbar-focus?logo=rust&label=crates.io)](https://crates.io/crates/taskbar-focus)
 [![CI](https://github.com/yoelrosenthal/taskbar-focus/actions/workflows/ci.yml/badge.svg)](https://github.com/yoelrosenthal/taskbar-focus/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-007ec6)](LICENSE)<br>
+[![License: MIT](https://img.shields.io/badge/license-MIT-007ec6)](LICENSE)
 [![Rust: stable](https://img.shields.io/badge/rust-stable-e57324)](https://www.rust-lang.org/)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D4)](#install)
 [![Offline-first](https://img.shields.io/badge/offline-first-4c1)](#privacy-and-local-data)
