@@ -10,6 +10,16 @@ request is merged into `main`; there is no need to edit them by hand.
 
 <!-- next-release -->
 
+## [0.3.0] - 2026-08-04
+
+### Added
+
+- draw the icons from the system icon font
+- give every setting and page an icon
+- group settings into pages with a search box
+
+**Full changelog**: https://github.com/yoelrosenthal/taskbar-focus/compare/v0.2.0...v0.3.0
+
 ## [0.2.0] - 2026-08-03
 
 ### Changed
