@@ -19,10 +19,11 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontIndirectW, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW,
-    EndPaint, FillRect, GetSysColor, GetSysColorBrush, InvalidateRect, RoundRect, SelectObject,
-    SetBkMode, SetTextColor, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT,
-    DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC,
-    HFONT, HPEN, LOGFONTW, PAINTSTRUCT, PS_SOLID, TRANSPARENT,
+    EndPaint, FillRect, GetDC, GetSysColor, GetSysColorBrush, GetTextFaceW, InvalidateRect,
+    ReleaseDC, RoundRect, SelectObject, SetBkMode, SetTextColor, COLOR_GRAYTEXT, COLOR_HIGHLIGHT,
+    COLOR_WINDOW, COLOR_WINDOWTEXT, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX,
+    DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HPEN, LOGFONTW, PAINTSTRUCT, PS_SOLID,
+    TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemServices::{SS_ENDELLIPSIS, SS_ETCHEDHORZ};
@@ -142,15 +143,10 @@ const CARD_Y: i32 = 11;
 const ICON_W: i32 = 30;
 const H: i32 = 22;
 
-/// The icon for each page, in the same order as [`PAGES`].
+/// The icon for each page, in the same order as [`PAGES`]: stopwatch, repeat,
+/// bell, moon, speaker, monitor, keyboard.
 const PAGE_ICONS: [&str; 7] = [
-    "\u{23F1}",
-    "\u{1F345}",
-    "\u{1F514}",
-    "\u{1F319}",
-    "\u{1F50A}",
-    "\u{1F5A5}",
-    "\u{2328}",
+    "\u{E916}", "\u{E8EE}", "\u{EA8F}", "\u{E708}", "\u{E767}", "\u{E7F4}", "\u{E765}",
 ];
 
 /// What a row in the settings pane looks like, which decides how it is laid
@@ -362,11 +358,7 @@ pub fn open(owner: HWND, app: *mut App) -> Option<HWND> {
 }
 
 /// The standard UI font, a bold variant for section captions, a larger one for
-/// the page title, and Segoe UI Emoji for the icons.
-///
-/// GDI draws Segoe UI Emoji as its monochrome outlines rather than in colour -
-/// colour layers need DirectWrite - which suits a settings window better than
-/// full-colour emoji would.
+/// the page title, and the system icon font.
 fn gui_fonts() -> (HFONT, HFONT, HFONT, HFONT) {
     unsafe {
         let mut ncm = NONCLIENTMETRICSW {
@@ -393,14 +385,47 @@ fn gui_fonts() -> (HFONT, HFONT, HFONT, HFONT) {
         let mut icon_lf = lf;
         icon_lf.lfWeight = 400;
         icon_lf.lfHeight = icon_lf.lfHeight * 7 / 5;
-        set_face(&mut icon_lf, "Segoe UI Emoji");
         (
             CreateFontIndirectW(&lf),
             CreateFontIndirectW(&bold_lf),
             CreateFontIndirectW(&title_lf),
-            CreateFontIndirectW(&icon_lf),
+            icon_font(&icon_lf),
         )
     }
+}
+
+/// The system icon font, which is where the glyphs in this window come from.
+///
+/// Windows 11 ships Segoe Fluent Icons and Windows 10 shipped Segoe MDL2
+/// Assets; the two use the same code points for the glyphs used here. GDI
+/// substitutes silently when a face is missing, drawing empty boxes, so each
+/// candidate is asked for by name and then checked against what was actually
+/// created.
+unsafe fn icon_font(base: &LOGFONTW) -> HFONT {
+    for face in ["Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol"] {
+        let mut lf = *base;
+        set_face(&mut lf, face);
+        let font = CreateFontIndirectW(&lf);
+        if font_is(font, face) {
+            return font;
+        }
+        let _ = DeleteObject(font.into());
+    }
+    CreateFontIndirectW(base)
+}
+
+/// Whether `font` really is the typeface it asked for.
+unsafe fn font_is(font: HFONT, face: &str) -> bool {
+    let hdc = GetDC(None);
+    if hdc.is_invalid() {
+        return false;
+    }
+    let old = SelectObject(hdc, font.into());
+    let mut name = [0u16; 32];
+    let n = GetTextFaceW(hdc, Some(&mut name));
+    SelectObject(hdc, old);
+    ReleaseDC(None, hdc);
+    n > 1 && String::from_utf16_lossy(&name[..n as usize - 1]) == face
 }
 
 /// Name the typeface a font description asks for.
@@ -984,7 +1009,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_TIMER, "Preset");
     r.combo(
-        "\u{1F4CB}",
+        "\u{E8FD}",
         ID_PRESET,
         "Preset",
         &names,
@@ -994,7 +1019,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
          change this preset, or Save as new preset to keep both.",
     );
     r.field(
-        "\u{1F3F7}",
+        "\u{E8EC}",
         ID_NAME,
         "Preset name",
         &p.name,
@@ -1004,7 +1029,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_TIMER, "Lengths");
     r.field(
-        "\u{1F3AF}",
+        "\u{E916}",
         ID_FOCUS,
         "Focus (minutes)",
         &num(p.focus_minutes),
@@ -1012,7 +1037,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "How long one focus session lasts.",
     );
     r.field(
-        "\u{2615}",
+        "\u{EC32}",
         ID_SHORT,
         "Short break (minutes)",
         &num(p.short_break_minutes),
@@ -1020,7 +1045,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "The break taken after most focus sessions.",
     );
     r.field(
-        "\u{1F6CB}",
+        "\u{E823}",
         ID_LONG,
         "Long break (minutes)",
         &num(p.long_break_minutes),
@@ -1028,7 +1053,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "The longer break taken after every Nth focus session.",
     );
     r.field(
-        "\u{1F522}",
+        "\u{E9D5}",
         ID_SESSIONS,
         "Sessions per long break",
         &p.sessions_before_long_break.to_string(),
@@ -1038,7 +1063,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_SEQUENCE, "Automatic sequence");
     r.check(
-        "\u{1F345}",
+        "\u{E8EE}",
         ID_SEQUENCE,
         "Run the Pomodoro sequence",
         cfg.behavior.sequence_enabled,
@@ -1046,14 +1071,14 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "Master switch for focus, break and long break running one after another.",
     );
     r.sub_check(
-        "\u{2615}",
+        "\u{EC32}",
         ID_AUTO_BREAK,
         "Start a break when focus ends",
         cfg.behavior.auto_start_break,
         "When a focus session completes, begin the break automatically.",
     );
     r.sub_check(
-        "\u{1F3AF}",
+        "\u{E916}",
         ID_AUTO_FOCUS,
         "Start focus when a break ends",
         cfg.behavior.auto_start_focus,
@@ -1063,7 +1088,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_SEQUENCE, "Interruptions");
     r.check(
-        "\u{1F512}",
+        "\u{E72E}",
         ID_STRICT,
         "Strict focus",
         cfg.behavior.strict_focus,
@@ -1072,7 +1097,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
          so a stray click cannot end it. Breaks are never guarded.",
     );
     r.check(
-        "\u{267B}",
+        "\u{E81C}",
         ID_RESTORE_SESSION,
         "Restore an interrupted session on restart",
         cfg.behavior.restore_session_on_restart,
@@ -1080,7 +1105,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "If the app closes mid-session, bring the remaining time back next time it starts.",
     );
     r.combo(
-        "\u{1F4A4}",
+        "\u{E7E8}",
         ID_WAKE,
         "After sleep",
         &[
@@ -1100,7 +1125,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_NOTIFICATIONS, "Windows notifications");
     r.check(
-        "\u{1F514}",
+        "\u{EA8F}",
         ID_NOTIFY,
         "Show notifications",
         cfg.notifications.enabled,
@@ -1108,28 +1133,28 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "Turn this off to make the app silent in the notification centre.",
     );
     r.sub_check(
-        "\u{1F3AF}",
+        "\u{E916}",
         ID_N_FS,
         "Focus started",
         cfg.notifications.events.focus_start,
         "Notify when a focus session begins.",
     );
     r.sub_check(
-        "\u{1F3C1}",
+        "\u{E7C1}",
         ID_N_FE,
         "Focus ended",
         cfg.notifications.events.focus_end,
         "Notify when a focus session completes.",
     );
     r.sub_check(
-        "\u{2615}",
+        "\u{EC32}",
         ID_N_BS,
         "Break started",
         cfg.notifications.events.break_start,
         "Notify when a break begins.",
     );
     r.sub_check(
-        "\u{23F0}",
+        "\u{E823}",
         ID_N_BE,
         "Break ended",
         cfg.notifications.events.break_end,
@@ -1138,7 +1163,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_DND, "Muting");
     r.check(
-        "\u{1F319}",
+        "\u{E708}",
         ID_DND,
         "Mute notifications during focus",
         cfg.dnd.enabled,
@@ -1153,7 +1178,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_DND, "Muted indicator");
     r.check(
-        "\u{1F515}",
+        "\u{EA8F}",
         ID_MUTE_TRAY,
         "Add a separate bell beside the clock",
         cfg.dnd.mute_tray_icon,
@@ -1162,7 +1187,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
          stays put.",
     );
     r.check(
-        "\u{1F5A5}",
+        "\u{E7ED}",
         ID_MUTE_WINDOW,
         "Show a muted bell in the timer window",
         cfg.dnd.mute_window,
@@ -1179,7 +1204,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_SOUNDS, "Sound cues");
     r.check(
-        "\u{1F507}",
+        "\u{E74F}",
         ID_MUTE,
         "Mute all sounds",
         cfg.sounds.muted,
@@ -1187,28 +1212,28 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "Silences every cue without forgetting which ones you had chosen.",
     );
     r.sub_check(
-        "\u{1F3AF}",
+        "\u{E916}",
         ID_S_FS,
         "Focus started",
         cfg.sounds.events.focus_start,
         "Play a cue when a focus session begins.",
     );
     r.sub_check(
-        "\u{1F3C1}",
+        "\u{E7C1}",
         ID_S_FE,
         "Focus ended",
         cfg.sounds.events.focus_end,
         "Play a cue when a focus session completes.",
     );
     r.sub_check(
-        "\u{2615}",
+        "\u{EC32}",
         ID_S_BS,
         "Break started",
         cfg.sounds.events.break_start,
         "Play a cue when a break begins.",
     );
     r.sub_check(
-        "\u{23F0}",
+        "\u{E823}",
         ID_S_BE,
         "Break ended",
         cfg.sounds.events.break_end,
@@ -1217,7 +1242,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_WINDOW, "Compact timer");
     r.check(
-        "\u{1F5A5}",
+        "\u{E7F4}",
         ID_MINI,
         "Show the compact timer window",
         cfg.display.mini_window,
@@ -1226,7 +1251,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
          or make it large. Click it to start or pause.",
     );
     r.check(
-        "\u{1F4CC}",
+        "\u{E718}",
         ID_TOPMOST,
         "Keep it above other windows",
         cfg.display.always_on_top,
@@ -1240,7 +1265,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
 
     r.header(PAGE_HOTKEYS, "Global hotkeys");
     r.check(
-        "\u{2328}",
+        "\u{E765}",
         ID_HOTKEYS,
         "Enable global hotkeys",
         cfg.hotkeys.enabled,
@@ -1248,7 +1273,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "If another program already owns a combination, you will be told.",
     );
     r.field(
-        "\u{23EF}",
+        "\u{E768}",
         ID_HK_TOGGLE,
         "Start / pause",
         &cfg.hotkeys.toggle,
@@ -1256,7 +1281,7 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "A modifier is required.",
     );
     r.field(
-        "\u{23ED}",
+        "\u{E893}",
         ID_HK_SKIP,
         "Skip to next",
         &cfg.hotkeys.skip,
@@ -1927,7 +1952,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let icon = if query(hwnd).is_empty() {
                 PAGE_ICONS[st.page]
             } else {
-                "\u{1F50D}"
+                "\u{E721}"
             };
             draw_icon(hdc, icon, CONTENT_X, PAD, 28, 28);
             SelectObject(hdc, old_font);
