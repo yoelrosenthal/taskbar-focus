@@ -53,6 +53,12 @@ pub struct Orchestrator {
     /// Whether notifications are being suppressed right now, for the muted
     /// indicator. Cached because it is read from the system, not from us.
     dnd_active: bool,
+    /// Whether the worker's latest requested state is DND on.
+    dnd_engage_requested: bool,
+    /// Whether a release must finish before notifications can be delivered.
+    dnd_release_pending: bool,
+    /// Notifications waiting for app-owned DND to be released.
+    pending_notifications: Vec<UiEvent>,
     /// Ticks to wait before reading the system state again.
     dnd_poll_in: u32,
 }
@@ -73,6 +79,9 @@ impl Orchestrator {
             dnd_note: None,
             dnd_engaged: false,
             dnd_active: false,
+            dnd_engage_requested: false,
+            dnd_release_pending: false,
+            pending_notifications: Vec::new(),
             dnd_poll_in: 0,
         }
     }
@@ -190,7 +199,16 @@ impl Orchestrator {
     /// Drain finished DND changes and turn failures into warnings.
     pub fn collect_dnd_reports(&mut self) -> Vec<UiEvent> {
         let mut out = Vec::new();
+        let mut release_allows_notifications = false;
         for r in self.dnd.reports().collect::<Vec<_>>() {
+            if !r.engaging {
+                self.dnd_release_pending = false;
+                if matches!(&r.outcome, DndOutcome::Failed(_)) {
+                    self.pending_notifications.clear();
+                } else {
+                    release_allows_notifications = true;
+                }
+            }
             crate::audit::log_dnd(r.engaging, &format!("{:?}", r.outcome));
             match &r.outcome {
                 DndOutcome::Applied(_) => {
@@ -216,10 +234,33 @@ impl Orchestrator {
             }
             out.push(UiEvent::Refresh);
         }
+        if release_allows_notifications {
+            out.append(&mut self.pending_notifications);
+        }
         if !out.is_empty() {
             self.poll_dnd();
         }
         out
+    }
+
+    /// Continue DND changes after the UI has handed notifications to Windows.
+    pub fn ui_events_applied(&mut self) {
+        if self.should_engage_dnd() && !self.dnd_engage_requested && !self.dnd_release_pending {
+            self.dnd.engage();
+            self.dnd_engage_requested = true;
+        }
+    }
+
+    /// Replace settings and reconcile DND with the current timer phase.
+    pub fn replace_config(&mut self, config: Config) {
+        self.config = config;
+        if !self.should_engage_dnd() {
+            self.request_dnd_release();
+        }
+    }
+
+    fn should_engage_dnd(&self) -> bool {
+        self.config.dnd.enabled && self.timer.state().phase() == Some(Phase::Focus)
     }
 
     /// Feed the state machine and turn its effects into OS actions.
@@ -234,7 +275,6 @@ impl Orchestrator {
         for e in &effects {
             match *e {
                 Effect::Started(Phase::Focus) => {
-                    self.set_dnd(true);
                     self.emit(
                         &mut out,
                         Event::FocusStart,
@@ -243,7 +283,6 @@ impl Orchestrator {
                     );
                 }
                 Effect::Started(phase) => {
-                    self.set_dnd(false);
                     self.emit(
                         &mut out,
                         Event::BreakStart,
@@ -270,11 +309,11 @@ impl Orchestrator {
                         }
                     }
                 }
-                Effect::WentIdle => self.set_dnd(false),
-                Effect::Paused(_) | Effect::Resumed(_) => {}
+                Effect::WentIdle | Effect::Paused(_) | Effect::Resumed(_) => {}
             }
         }
 
+        self.reconcile_dnd(&mut out);
         session::save(&self.timer);
         out.push(UiEvent::Refresh);
         out
@@ -299,16 +338,34 @@ impl Orchestrator {
             .unwrap_or_default()
     }
 
-    /// Ask the background worker to change DND, if the user enabled that.
-    fn set_dnd(&mut self, on: bool) {
-        if !self.config.dnd.enabled {
+    /// Reconcile DND only after deciding which timer notifications will fire.
+    fn reconcile_dnd(&mut self, out: &mut Vec<UiEvent>) {
+        let notifications_need_release = out
+            .iter()
+            .any(|event| matches!(event, UiEvent::Notify { .. }))
+            && (self.dnd_engage_requested || self.dnd_engaged || self.dnd_release_pending);
+
+        if notifications_need_release {
+            let (notifications, immediate) = out
+                .drain(..)
+                .partition(|event| matches!(event, UiEvent::Notify { .. }));
+            self.pending_notifications.extend(notifications);
+            *out = immediate;
+            self.request_dnd_release();
+        } else if !self.should_engage_dnd() {
+            self.request_dnd_release();
+        }
+    }
+
+    /// Ask the worker to release app-owned DND exactly once.
+    fn request_dnd_release(&mut self) {
+        let release_needed = self.dnd_engage_requested || self.dnd_engaged;
+        if self.dnd_release_pending || !release_needed {
             return;
         }
-        if on {
-            self.dnd.engage();
-        } else {
-            self.dnd.release();
-        }
+        self.dnd.release();
+        self.dnd_engage_requested = false;
+        self.dnd_release_pending = true;
     }
 
     /// Queue a notification and/or sound, honouring the per-event toggles.

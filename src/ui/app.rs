@@ -381,6 +381,7 @@ impl App {
             }
         }
         self.refresh();
+        self.orch.ui_events_applied();
     }
 
     /// Run a command, applying the "strict focus" guard where it applies.
@@ -597,7 +598,7 @@ impl App {
 
     /// Called by the settings window when the user saves.
     pub fn apply_config(&mut self, new: Config) {
-        self.orch.config = new;
+        self.orch.replace_config(new);
         let _ = self.orch.config.save();
         self.register_hotkeys();
         self.sync_mini_window();
