@@ -10,6 +10,17 @@ request is merged into `main`; there is no need to edit them by hand.
 
 <!-- next-release -->
 
+## [0.3.4] - 2026-08-04
+
+### Changed
+
+- docs: keep badges on one row
+- docs: split badges across two rows
+- docs: add project badges
+- docs: refresh user guide and screenshots
+
+**Full changelog**: https://github.com/yoelrosenthal/taskbar-focus/compare/v0.3.3...v0.3.4
+
 ## [0.3.3] - 2026-08-04
 
 ### Fixed
