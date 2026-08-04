@@ -199,11 +199,15 @@ impl Orchestrator {
     /// Drain finished DND changes and turn failures into warnings.
     pub fn collect_dnd_reports(&mut self) -> Vec<UiEvent> {
         let mut out = Vec::new();
-        let mut release_reported = false;
+        let mut release_allows_notifications = false;
         for r in self.dnd.reports().collect::<Vec<_>>() {
             if !r.engaging {
                 self.dnd_release_pending = false;
-                release_reported = true;
+                if matches!(&r.outcome, DndOutcome::Failed(_)) {
+                    self.pending_notifications.clear();
+                } else {
+                    release_allows_notifications = true;
+                }
             }
             crate::audit::log_dnd(r.engaging, &format!("{:?}", r.outcome));
             match &r.outcome {
@@ -230,7 +234,7 @@ impl Orchestrator {
             }
             out.push(UiEvent::Refresh);
         }
-        if release_reported {
+        if release_allows_notifications {
             out.append(&mut self.pending_notifications);
         }
         if !out.is_empty() {
