@@ -10,6 +10,15 @@ request is merged into `main`; there is no need to edit them by hand.
 
 <!-- next-release -->
 
+## [0.3.1] - 2026-08-04
+
+### Fixed
+
+- keep notifications queued until DND releases
+- show timer notifications around DND transitions
+
+**Full changelog**: https://github.com/yoelrosenthal/taskbar-focus/compare/v0.3.0...v0.3.1
+
 ## [0.3.0] - 2026-08-04
 
 ### Added
