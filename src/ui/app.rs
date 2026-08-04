@@ -372,16 +372,23 @@ impl App {
     }
 
     fn apply_events(&mut self, events: Vec<UiEvent>) {
+        let mut notification_sent = false;
         for e in events {
             match e {
-                UiEvent::Notify { title, body } => self.tray.notify(&title, &body),
+                UiEvent::Notify { title, body } => {
+                    self.tray.notify(&title, &body);
+                    notification_sent = true;
+                }
                 UiEvent::Sound(ev) => sound::play(ev),
                 UiEvent::Refresh => {}
-                UiEvent::Warn(msg) => self.tray.notify("taskbar-focus", &msg),
+                UiEvent::Warn(msg) => {
+                    self.tray.notify("taskbar-focus", &msg);
+                    notification_sent = true;
+                }
             }
         }
         self.refresh();
-        self.orch.ui_events_applied();
+        self.orch.ui_events_applied(notification_sent);
     }
 
     /// Run a command, applying the "strict focus" guard where it applies.

@@ -12,6 +12,7 @@ use crate::os::dnd::worker::DndWorker;
 use crate::os::dnd::DndOutcome;
 use crate::session;
 use crate::timer::{Cmd, Effect, Phase, State, Timer};
+use std::time::{Duration, Instant};
 
 /// Which sound/notification an event maps to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +56,8 @@ pub struct Orchestrator {
     dnd_active: bool,
     /// Whether the worker's latest requested state is DND on.
     dnd_engage_requested: bool,
+    /// Earliest time DND may engage after handing a notification to Windows.
+    dnd_engage_after: Option<Instant>,
     /// Whether a release must finish before notifications can be delivered.
     dnd_release_pending: bool,
     /// Notifications waiting for app-owned DND to be released.
@@ -69,6 +72,9 @@ pub struct Orchestrator {
 /// user toggles Do Not Disturb themselves.
 const DND_POLL_TICKS: u32 = 4;
 
+/// Time for Windows to render a submitted notification before DND can hide it.
+const DND_ENGAGE_GRACE: Duration = Duration::from_secs(2);
+
 impl Orchestrator {
     pub fn new(config: Config, timer: Timer, dnd: DndWorker) -> Self {
         Orchestrator {
@@ -80,6 +86,7 @@ impl Orchestrator {
             dnd_engaged: false,
             dnd_active: false,
             dnd_engage_requested: false,
+            dnd_engage_after: None,
             dnd_release_pending: false,
             pending_notifications: Vec::new(),
             dnd_poll_in: 0,
@@ -244,8 +251,23 @@ impl Orchestrator {
     }
 
     /// Continue DND changes after the UI has handed notifications to Windows.
-    pub fn ui_events_applied(&mut self) {
-        if self.should_engage_dnd() && !self.dnd_engage_requested && !self.dnd_release_pending {
+    pub fn ui_events_applied(&mut self, notification_sent: bool) {
+        if !self.should_engage_dnd() {
+            self.dnd_engage_after = None;
+            return;
+        }
+        if notification_sent {
+            self.dnd_engage_after = Some(Instant::now() + DND_ENGAGE_GRACE);
+            return;
+        }
+        if self
+            .dnd_engage_after
+            .is_some_and(|deadline| Instant::now() < deadline)
+        {
+            return;
+        }
+        self.dnd_engage_after = None;
+        if !self.dnd_engage_requested && !self.dnd_release_pending {
             self.dnd.engage();
             self.dnd_engage_requested = true;
         }
