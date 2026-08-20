@@ -10,6 +10,26 @@ request is merged into `main`; there is no need to edit them by hand.
 
 <!-- next-release -->
 
+## [0.4.0] - 2026-08-20
+
+### Added
+
+- session-end overlay, multi-monitor flash, and looping defaults
+
+### Fixed
+
+- place the overlay on the active monitor when the compact timer is hidden
+- place the overlay on the active monitor when the timer is hidden
+- drop dead overlay key handler and match tray toggle wording
+- keep DND through short-break toasts
+- keep DND through short-break toasts and preserve gated settings
+
+### Changed
+
+- chore: ignore local agent instructions
+
+**Full changelog**: https://github.com/yoelrosenthal/taskbar-focus/compare/v0.3.4...v0.4.0
+
 ## [0.3.4] - 2026-08-04
 
 ### Changed
