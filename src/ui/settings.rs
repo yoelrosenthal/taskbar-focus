@@ -1821,11 +1821,10 @@ unsafe fn collect(st: &mut State, save_as_new: bool) -> Result<Config, &'static 
     cfg.presets = st.presets.clone();
     cfg.active_preset = edited.name;
 
-    let sequence = checked(pane, ID_SEQUENCE);
-    cfg.behavior.sequence_enabled = sequence;
-    cfg.behavior.auto_start_break = sequence && checked(pane, ID_AUTO_BREAK);
-    cfg.behavior.auto_start_focus = sequence && checked(pane, ID_AUTO_FOCUS);
-    cfg.behavior.repeat_cycles = sequence && checked(pane, ID_REPEAT_CYCLES);
+    cfg.behavior.sequence_enabled = checked(pane, ID_SEQUENCE);
+    cfg.behavior.auto_start_break = checked(pane, ID_AUTO_BREAK);
+    cfg.behavior.auto_start_focus = checked(pane, ID_AUTO_FOCUS);
+    cfg.behavior.repeat_cycles = checked(pane, ID_REPEAT_CYCLES);
     cfg.behavior.strict_focus = checked(pane, ID_STRICT);
     cfg.behavior.restore_session_on_restart = checked(pane, ID_RESTORE_SESSION);
     cfg.behavior.wake_policy = match combo_index(pane, ID_WAKE) {
@@ -1834,27 +1833,23 @@ unsafe fn collect(st: &mut State, save_as_new: bool) -> Result<Config, &'static 
         _ => WakePolicy::CountSleep,
     };
 
-    let dnd = checked(pane, ID_DND);
-    cfg.dnd.enabled = dnd;
-    cfg.dnd.keep_on_short_break = dnd && checked(pane, ID_DND_SHORT_BREAK);
-    cfg.dnd.mute_tray_icon = dnd && checked(pane, ID_MUTE_TRAY);
-    cfg.dnd.mute_window = dnd && checked(pane, ID_MUTE_WINDOW);
-    let mini = checked(pane, ID_MINI);
-    cfg.display.mini_window = mini;
-    cfg.display.always_on_top = mini && checked(pane, ID_TOPMOST);
+    cfg.dnd.enabled = checked(pane, ID_DND);
+    cfg.dnd.keep_on_short_break = checked(pane, ID_DND_SHORT_BREAK);
+    cfg.dnd.mute_tray_icon = checked(pane, ID_MUTE_TRAY);
+    cfg.dnd.mute_window = checked(pane, ID_MUTE_WINDOW);
+    cfg.display.mini_window = checked(pane, ID_MINI);
+    cfg.display.always_on_top = checked(pane, ID_TOPMOST);
 
-    let notify = checked(pane, ID_NOTIFY);
-    cfg.notifications.enabled = notify;
+    cfg.notifications.enabled = checked(pane, ID_NOTIFY);
     cfg.notifications.events.focus_start = checked(pane, ID_N_FS);
     cfg.notifications.events.focus_end = checked(pane, ID_N_FE);
     cfg.notifications.events.break_start = checked(pane, ID_N_BS);
     cfg.notifications.events.break_end = checked(pane, ID_N_BE);
 
-    let overlay = checked(pane, ID_ALERT_OVERLAY);
-    cfg.alerts.toast = notify && checked(pane, ID_ALERT_TOAST);
-    cfg.alerts.overlay = overlay;
+    cfg.alerts.toast = checked(pane, ID_ALERT_TOAST);
+    cfg.alerts.overlay = checked(pane, ID_ALERT_OVERLAY);
     cfg.alerts.flash = checked(pane, ID_ALERT_FLASH);
-    cfg.alerts.require_dismiss = overlay && checked(pane, ID_REQUIRE_DISMISS);
+    cfg.alerts.require_dismiss = checked(pane, ID_REQUIRE_DISMISS);
 
     cfg.sounds.muted = checked(pane, ID_MUTE);
     cfg.sounds.events.focus_start = checked(pane, ID_S_FS);
