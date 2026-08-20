@@ -1,12 +1,12 @@
 {
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "A tiny focus/Pomodoro timer for the Windows tray that mutes notifications while you work.",
   "homepage": "https://github.com/yoelrosenthal/taskbar-focus",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/yoelrosenthal/taskbar-focus/releases/download/v0.3.4/taskbar-focus.exe#/taskbar-focus.exe",
-      "hash": "3bc6bca7a5fbf73a2dac84e8bf8681294bc8dcd466bdffc59aa826909d6f6958"
+      "url": "https://github.com/yoelrosenthal/taskbar-focus/releases/download/v0.4.0/taskbar-focus.exe#/taskbar-focus.exe",
+      "hash": "b92a09d70f42210253d44a0114392032363326eae63bee578dc1fc1b22bb4949"
     }
   },
   "bin": "taskbar-focus.exe",
