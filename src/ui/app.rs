@@ -418,14 +418,15 @@ impl App {
     /// Anchor visual alerts on the compact timer if shown, otherwise the
     /// foreground window's monitor, else the main window.
     fn alert_anchor(&self) -> HWND {
-        self.mini_hwnd.unwrap_or_else(|| {
-            let fg = unsafe { GetForegroundWindow() };
-            if fg.is_invalid() {
-                self.hwnd
-            } else {
-                fg
-            }
-        })
+        if let Some(mini) = self.mini_hwnd {
+            return mini;
+        }
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_invalid() {
+            self.hwnd
+        } else {
+            fg
+        }
     }
 
     fn show_alert(&mut self, title: &str, body: &str, event: crate::orchestrator::Event) {
