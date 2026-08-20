@@ -382,17 +382,25 @@ impl Orchestrator {
     }
 
     /// Reconcile DND only after deciding which timer notifications will fire.
+    ///
+    /// Toasts never force a release while the current phase still wants DND.
+    /// They wait in [`Self::pending_notifications`] until a later phase
+    /// (long break or idle) lets go, so `keep_on_short_break` is not defeated
+    /// by a focus-end toast. Overlay and flash are not deferred: they are our
+    /// own windows and stay visible while DND is on.
     fn reconcile_dnd(&mut self, out: &mut Vec<UiEvent>) {
         let has_toast = out.iter().any(defers_until_dnd_release);
-        let notifications_need_release = has_toast
-            && (self.dnd_engage_requested || self.dnd_engaged || self.dnd_release_pending);
+        let holding = self.should_engage_dnd();
+        let dnd_owned = self.dnd_engage_requested || self.dnd_engaged || self.dnd_release_pending;
 
-        if notifications_need_release {
+        if has_toast && dnd_owned {
             let (deferred, immediate) = out.drain(..).partition(defers_until_dnd_release);
             self.pending_notifications.extend(deferred);
             *out = immediate;
-            self.request_dnd_release();
-        } else if !self.should_engage_dnd() {
+            if !holding {
+                self.request_dnd_release();
+            }
+        } else if !holding {
             self.request_dnd_release();
         }
     }

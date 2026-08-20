@@ -6,6 +6,7 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::cli::Command;
@@ -111,6 +112,10 @@ pub struct App {
     /// Bumped each time an alert is shown or dropped, so a delayed close
     /// message from a destroyed HWND cannot resume a replacement card.
     alert_generation: u32,
+    /// True while the strict-focus confirmation card is up. Commands, the
+    /// tray menu, settings, and the compact window must not change the
+    /// session until the user answers.
+    confirming: bool,
 }
 
 /// Entry point for the UI. Blocks until the user exits.
@@ -191,6 +196,7 @@ pub fn run(
             flash_hwnds: Vec::new(),
             alert_paused_timer: false,
             alert_generation: 0,
+            confirming: false,
         });
 
         app.register_hotkeys();
@@ -497,6 +503,9 @@ impl App {
 
     /// Run a command, applying the "strict focus" guard where it applies.
     fn handle_command(&mut self, cmd: &Command) {
+        if self.confirming {
+            return;
+        }
         if self.needs_confirmation(cmd) && !self.confirm(cmd) {
             return;
         }
@@ -527,7 +536,7 @@ impl App {
             && self.orch.timer.state().phase() == Some(Phase::Focus)
     }
 
-    fn confirm(&self, cmd: &Command) -> bool {
+    fn confirm(&mut self, cmd: &Command) -> bool {
         let (title, action) = if matches!(cmd, Command::Skip) {
             ("Skip this focus session?", "Skip")
         } else {
@@ -545,10 +554,31 @@ impl App {
             }
             None => "A stray click shouldn't end a running focus session.".into(),
         };
-        crate::ui::confirm::ask(self.hwnd, title, &body, action)
+        self.confirming = true;
+        self.set_interactive(false);
+        let accepted = crate::ui::confirm::ask(self.hwnd, title, &body, action);
+        self.set_interactive(true);
+        self.confirming = false;
+        accepted
+    }
+
+    /// Disable the compact timer and settings so they cannot change the
+    /// session while [`Self::confirm`] is waiting for an answer.
+    fn set_interactive(&self, enabled: bool) {
+        unsafe {
+            if let Some(h) = self.mini_hwnd {
+                let _ = EnableWindow(h, enabled);
+            }
+            if let Some(h) = self.settings_hwnd {
+                let _ = EnableWindow(h, enabled);
+            }
+        }
     }
 
     pub fn show_menu(&mut self) {
+        if self.confirming {
+            return;
+        }
         unsafe {
             let Ok(menu) = CreatePopupMenu() else { return };
             let running = self.orch.timer.state().is_running();
@@ -682,6 +712,9 @@ impl App {
     }
 
     fn on_menu(&mut self, id: usize) {
+        if self.confirming {
+            return;
+        }
         match id {
             ID_TOGGLE => self.handle_command(&Command::Toggle),
             ID_START_FOCUS => self.handle_command(&Command::StartFocus),
@@ -710,6 +743,9 @@ impl App {
     }
 
     fn open_settings(&mut self) {
+        if self.confirming {
+            return;
+        }
         if let Some(h) = self.settings_hwnd {
             unsafe {
                 let _ = SetForegroundWindow(h);

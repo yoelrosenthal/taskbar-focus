@@ -258,7 +258,9 @@ pub fn show_overlay(
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(st) as isize);
         if let Some(d) = dim {
-            SetWindowLongPtrW(d, GWLP_USERDATA, hwnd.0 as isize);
+            if !settings.require_dismiss {
+                SetWindowLongPtrW(d, GWLP_USERDATA, hwnd.0 as isize);
+            }
         }
 
         if !settings.require_dismiss {

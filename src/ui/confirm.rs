@@ -1,4 +1,8 @@
 //! Modal Strict-focus confirmation, drawn like the session overlay.
+//!
+//! [`ask`] runs a nested message loop so the card can paint and accept
+//! clicks. The caller must ignore other session commands until it returns,
+//! otherwise a second Stop or Skip would open another card on top.
 
 use std::sync::Once;
 
