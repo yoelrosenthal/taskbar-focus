@@ -415,10 +415,19 @@ impl App {
         self.orch.ui_events_applied(notification_sent);
     }
 
-    /// Anchor visual alerts on the compact timer when it exists, otherwise the
-    /// hidden main window (primary monitor).
+    /// Monitor for the overlay: the compact timer if it is showing, otherwise
+    /// the current foreground window so a hidden timer still lands on the
+    /// active display, else the hidden main window on the primary monitor.
     fn alert_anchor(&self) -> HWND {
-        self.mini_hwnd.unwrap_or(self.hwnd)
+        if let Some(mini) = self.mini_hwnd {
+            return mini;
+        }
+        let fg = unsafe { GetForegroundWindow() };
+        if !fg.is_invalid() {
+            fg
+        } else {
+            self.hwnd
+        }
     }
 
     fn show_alert(&mut self, title: &str, body: &str, event: crate::orchestrator::Event) {
