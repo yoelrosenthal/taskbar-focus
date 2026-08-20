@@ -179,6 +179,7 @@ struct OverlayState {
     font_body: HFONT,
     dim: Option<HWND>,
     pressed: bool,
+    require_dismiss: bool,
     generation: u32,
 }
 
@@ -254,13 +255,12 @@ pub fn show_overlay(
             font_body,
             dim,
             pressed: false,
+            require_dismiss: settings.require_dismiss,
             generation,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(st) as isize);
         if let Some(d) = dim {
-            if !settings.require_dismiss {
-                SetWindowLongPtrW(d, GWLP_USERDATA, hwnd.0 as isize);
-            }
+            SetWindowLongPtrW(d, GWLP_USERDATA, hwnd.0 as isize);
         }
 
         if !settings.require_dismiss {
@@ -355,7 +355,10 @@ unsafe extern "system" fn dim_wndproc(
         WM_LBUTTONUP => {
             let card = HWND(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut _);
             if !card.is_invalid() {
-                let _ = DestroyWindow(card);
+                let ptr = GetWindowLongPtrW(card, GWLP_USERDATA) as *mut OverlayState;
+                if ptr.is_null() || !(*ptr).require_dismiss {
+                    let _ = DestroyWindow(card);
+                }
             }
             LRESULT(0)
         }
