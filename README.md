@@ -49,8 +49,9 @@ and run it.
 ## Quick start
 
 1. Open Taskbar-Focus. It runs in the Windows notification area beside the
-   clock.
-2. Left-click the progress-ring icon to start a focus session.
+   clock, and shows a compact countdown on the desktop.
+2. Left-click the progress-ring icon (or the countdown) to start a focus
+   session.
 3. Left-click again to pause or resume. Right-click for breaks, presets,
    settings, and other actions.
 
@@ -72,46 +73,77 @@ The notification-area icons show the current state without opening a window.
 The same muted-notifications indicator can also appear beside the countdown in
 the timer window.
 
-## Optional timer window
+## Timer window
 
-The timer window is optional and disabled by default. When enabled, it provides
-a clear, always-visible countdown that can be moved, resized, and placed over
-the taskbar or anywhere else on the desktop. Clicking the window starts,
-pauses, or resumes the timer.
+A compact countdown is shown by default. Move it, resize it, and park it over
+the taskbar or anywhere else on the desktop. Clicking it starts, pauses, or
+resumes the timer.
 
 ![Taskbar-Focus timer window showing a focus countdown](docs/images/timer-window.png)
 
-Enable it from **Settings → Timer window** or choose **Show timer window** from
+Turn it off in **Settings → Timer window**, or uncheck **Show timer window** in
 the tray menu. Taskbar-Focus remembers its size and position. Use **Reset window
 size** to return to the default layout.
 
 ## Settings
 
-Double-click the tray icon, or right-click it and choose **Settings...**. The
-searchable settings window contains timer lengths, session behavior,
-notifications, Do Not Disturb, sounds, timer-window options, and global
-hotkeys.
+Double-click the tray icon, or right-click it and choose **Settings...**. Search
+from the top of the window, or open a page:
+
+| Page | What it covers |
+| --- | --- |
+| Timer | Preset lengths for focus, short break, and long break |
+| Sequence | Automatic cycles, strict focus, sleep, and restart |
+| Notifications | Tray toasts, a centre overlay, and a screen flash |
+| Do Not Disturb | Muting during focus, and optionally through short breaks |
+| Sounds | Mute, plus which events play the Windows Asterisk cue |
+| Timer window | Compact countdown visibility and always-on-top |
+| Hotkeys | Global shortcuts |
 
 ![Taskbar-Focus Settings window on the Timer page](docs/images/settings-window.png)
 
-Changes are applied when you select **Save**. Use **Save as new preset** to keep
-the current timer lengths as a separate preset.
+Changes apply when you select **Save**. **Save as new preset** keeps the current
+timer lengths as a separate preset. **Restore defaults** loads the built-in
+values without overwriting your file until you save.
+
+An update leaves an existing `config.toml` alone. Use **Restore defaults** if
+you want the current factory settings.
 
 ## Focus sessions and breaks
 
-The default sequence is:
+New installs run a looping Pomodoro sequence:
 
 1. Complete a focus session.
 2. Start a short break automatically.
-3. Start a long break after the configured number of completed focus sessions.
-4. Return to idle when the break ends, ready for the next session.
+3. Start the next focus session when the break ends.
+4. After enough focuses, take a long break, then start another cycle.
 
-You can change this behavior in Settings. Options include automatically starting
-the next focus session, requiring confirmation before stopping strict focus,
-and choosing how a running timer handles sleep.
+**Settings → Sequence** can turn the automatic chain off, skip auto-starting a
+break or the next focus, or stop after a long break instead of starting another
+cycle. Strict focus asks for confirmation before Stop or Skip can abandon a
+running focus session. A running timer can count sleep, ignore it, or pause
+when the machine wakes.
 
-When focus begins, Taskbar-Focus enables the same **Do not disturb** mode used by
-Windows. When focus ends, it restores notifications. Windows priority apps and
+## When a session ends
+
+Each completed focus or break can use any combination of:
+
+- a **tray toast** in the notification area
+- a **centre overlay** on the active monitor, with an optional wait-for-dismiss
+  that pauses the timer until you continue
+- a **screen flash** that pulses on every connected monitor
+
+Overlay and flash stay visible while Do Not Disturb is on. Toasts wait until
+muting lifts, so Windows can actually show them.
+
+Sounds are separate: the Windows Asterisk cue from your sound scheme, with a
+master mute and a switch per event.
+
+## Do Not Disturb
+
+When focus begins, Taskbar-Focus enables the same **Do not disturb** mode used
+by Windows. When a break begins, it restores notifications. You can keep muting
+through short breaks and only unmute on a long break. Windows priority apps and
 contacts continue to follow your existing priority settings.
 
 ## Presets

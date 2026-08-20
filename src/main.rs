@@ -10,8 +10,8 @@
 //!   cli           argument parsing, shared with the single-instance IPC
 //!   orchestrator  the seam: timer effects -> OS actions
 //!   os::dnd       Do Not Disturb control (see its module docs first!)
-//!   os::sound     system sound cues
-//!   ui            tray icon, taskbar title, settings window, message pump
+//!   os::sound     Windows scheme aliases for timer cues
+//!   ui            tray icon, alerts, settings window, message pump
 //! ```
 //!
 //! The dependency direction is strictly `ui -> orchestrator -> {timer, os}`;

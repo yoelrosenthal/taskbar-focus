@@ -80,7 +80,7 @@ fn default_presets() -> Vec<Preset> {
 #[serde(rename_all = "snake_case")]
 pub enum WakePolicy {
     /// Subtract the time spent asleep - a 25 minute session started before a
-    /// 2 hour nap is simply over. This is the least surprising default.
+    /// 2 hour nap is simply over.
     #[default]
     CountSleep,
     /// Pretend the machine never slept and keep the remaining time.
@@ -95,6 +95,8 @@ pub struct Behavior {
     pub sequence_enabled: bool,
     pub auto_start_break: bool,
     pub auto_start_focus: bool,
+    /// After a long break ends, start a new focus session (another cycle).
+    pub repeat_cycles: bool,
     /// Require confirmation before stopping or skipping a *focus* session.
     pub strict_focus: bool,
     /// Re-arm an interrupted session when the app restarts.
@@ -107,10 +109,11 @@ impl Default for Behavior {
         Self {
             sequence_enabled: true,
             auto_start_break: true,
-            auto_start_focus: false,
+            auto_start_focus: true,
+            repeat_cycles: true,
             strict_focus: false,
-            restore_session_on_restart: true,
-            wake_policy: WakePolicy::default(),
+            restore_session_on_restart: false,
+            wake_policy: WakePolicy::IgnoreSleep,
         }
     }
 }
@@ -124,14 +127,16 @@ pub struct DndSettings {
     /// Windows UI calls "Do not disturb" - so the user's own priority apps and
     /// contacts still get through. There is deliberately no profile choice
     /// here; see `os::dnd::profile` for why.
-    /// This is the only Do Not Disturb setting, deliberately.
-    ///
     /// Restoring the previous state afterwards, and restarting the notification
     /// service so Windows notices the change, are not choices: the first is
     /// simply correct, and the second is what makes the feature work at all.
     /// Offering them as switches invited people to turn the feature off without
     /// realising it.
     pub enabled: bool,
+
+    /// Leave Do Not Disturb on through short breaks; only a long break releases
+    /// it. Off by default, so any break unmutes.
+    pub keep_on_short_break: bool,
 
     /// Show the mark as a separate notification-area icon while muted, as
     /// close to Windows' own indicator as an ordinary program can get: its own
@@ -149,6 +154,7 @@ impl Default for DndSettings {
     fn default() -> Self {
         Self {
             enabled: true,
+            keep_on_short_break: false,
             mute_tray_icon: true,
             mute_window: true,
         }
@@ -181,7 +187,7 @@ pub struct Display {
 impl Default for Display {
     fn default() -> Self {
         Self {
-            mini_window: false,
+            mini_window: true,
             // On by default. The Windows taskbar is itself a top-most window,
             // so without this the compact window sinks behind it and cannot be
             // parked over the taskbar at all.
@@ -236,6 +242,94 @@ pub struct Sounds {
     pub events: EventToggles,
 }
 
+/// Duration presets for the screen flash.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LengthPreset {
+    Short,
+    #[default]
+    Normal,
+    Long,
+    ExtraLong,
+}
+
+impl LengthPreset {
+    pub fn flash_pulses(self) -> u32 {
+        self.flash_timing().0
+    }
+
+    pub fn flash_ms(self) -> u32 {
+        self.flash_timing().1
+    }
+
+    fn flash_timing(self) -> (u32, u32) {
+        match self {
+            Self::Short => (2, 110),
+            Self::Normal => (3, 160),
+            Self::Long => (5, 240),
+            Self::ExtraLong => (8, 320),
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::Short => 0,
+            Self::Normal => 1,
+            Self::Long => 2,
+            Self::ExtraLong => 3,
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::Short,
+            2 => Self::Long,
+            3 => Self::ExtraLong,
+            _ => Self::Normal,
+        }
+    }
+}
+
+/// How to draw attention when a focus or break interval completes.
+///
+/// Each channel is independent, so toast, overlay and flash can be combined.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Alerts {
+    /// Show an Action Centre tray toast.
+    pub toast: bool,
+    /// Show a large centred card on the active monitor.
+    pub overlay: bool,
+    /// Pulse a brief colour flash across every monitor.
+    pub flash: bool,
+    /// Keep the overlay until the user clicks Dismiss, and pause the timer
+    /// while it is open.
+    pub require_dismiss: bool,
+    /// Seconds before the overlay closes itself when `require_dismiss` is off.
+    pub auto_dismiss_secs: u32,
+    /// How many pulses, and how long each one lasts.
+    pub flash_length: LengthPreset,
+}
+
+impl Default for Alerts {
+    fn default() -> Self {
+        Self {
+            toast: true,
+            overlay: false,
+            flash: false,
+            require_dismiss: false,
+            auto_dismiss_secs: 8,
+            flash_length: LengthPreset::default(),
+        }
+    }
+}
+
+impl Alerts {
+    pub fn wants_visual(&self) -> bool {
+        self.overlay || self.flash
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Hotkeys {
@@ -264,6 +358,7 @@ pub struct Config {
     pub dnd: DndSettings,
     pub display: Display,
     pub notifications: Notifications,
+    pub alerts: Alerts,
     pub sounds: Sounds,
     pub hotkeys: Hotkeys,
 }
@@ -277,6 +372,7 @@ impl Default for Config {
             dnd: DndSettings::default(),
             display: Display::default(),
             notifications: Notifications::default(),
+            alerts: Alerts::default(),
             sounds: Sounds::default(),
             hotkeys: Hotkeys::default(),
         }
@@ -306,6 +402,7 @@ impl Config {
             sequence_enabled: self.behavior.sequence_enabled,
             auto_start_break: self.behavior.auto_start_break,
             auto_start_focus: self.behavior.auto_start_focus,
+            repeat_cycles: self.behavior.repeat_cycles,
         }
     }
 

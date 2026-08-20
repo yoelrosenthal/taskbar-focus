@@ -32,10 +32,10 @@ use windows::Win32::UI::Controls::{
     TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTS_ALWAYSTIP, TTTOOLINFOW,
     WC_BUTTONW, WC_COMBOBOXW, WC_EDITW, WC_LISTBOXW, WC_STATICW,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
+use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::config::{Config, Preset, WakePolicy};
+use crate::config::{Config, LengthPreset, Preset, WakePolicy};
 use crate::ui::app::App;
 use crate::ui::wide;
 
@@ -63,11 +63,13 @@ const ID_SESSIONS: usize = 105;
 const ID_SEQUENCE: usize = 110;
 const ID_AUTO_BREAK: usize = 111;
 const ID_AUTO_FOCUS: usize = 112;
+const ID_REPEAT_CYCLES: usize = 116;
 const ID_STRICT: usize = 113;
 const ID_RESTORE_SESSION: usize = 114;
 const ID_WAKE: usize = 115;
 
 const ID_DND: usize = 120;
+const ID_DND_SHORT_BREAK: usize = 121;
 const ID_MUTE_TRAY: usize = 122;
 const ID_MUTE_WINDOW: usize = 123;
 const ID_MINI: usize = 131;
@@ -78,6 +80,11 @@ const ID_N_FS: usize = 141;
 const ID_N_FE: usize = 142;
 const ID_N_BS: usize = 143;
 const ID_N_BE: usize = 144;
+const ID_ALERT_TOAST: usize = 145;
+const ID_REQUIRE_DISMISS: usize = 146;
+const ID_ALERT_OVERLAY: usize = 147;
+const ID_ALERT_FLASH: usize = 148;
+const ID_FLASH_LENGTH: usize = 149;
 
 const ID_MUTE: usize = 150;
 const ID_S_FS: usize = 151;
@@ -349,6 +356,7 @@ pub fn open(owner: HWND, app: *mut App) -> Option<HWND> {
 
         build(hwnd, &mut *ptr, &config);
         relayout(hwnd, &mut *ptr);
+        sync_dependencies((*ptr).pane);
         refresh_status(hwnd);
 
         let _ = ShowWindow(hwnd, SW_SHOW);
@@ -1082,8 +1090,15 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         ID_AUTO_FOCUS,
         "Start focus when a break ends",
         cfg.behavior.auto_start_focus,
-        "When a break completes, begin the next focus session automatically. \
-         Off by default, so breaks end with you in control.",
+        "When a break completes, begin the next focus session automatically.",
+    );
+    r.sub_check(
+        "\u{E8EE}",
+        ID_REPEAT_CYCLES,
+        "Start another cycle after a long break",
+        cfg.behavior.repeat_cycles,
+        "When the long break ends, begin a new focus session even if \
+         “Start focus when a break ends” is off.",
     );
 
     r.header(PAGE_SEQUENCE, "Interruptions");
@@ -1161,6 +1176,55 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "Notify when a break completes.",
     );
 
+    r.header(PAGE_NOTIFICATIONS, "When a session ends");
+    r.note(
+        "Pick any combination. Options that need another switch stay dimmed \
+         until that switch is on. Overlay and flash still work under Do Not \
+         Disturb.",
+        3,
+    );
+    r.check(
+        "\u{EA8F}",
+        ID_ALERT_TOAST,
+        "Tray toast",
+        cfg.alerts.toast,
+        "Needs “Show notifications” above.",
+        "Posts the usual Windows toast when a focus or break ends. Disabled \
+         while Show notifications is off.",
+    );
+    r.check(
+        "\u{E7F4}",
+        ID_ALERT_OVERLAY,
+        "Centre overlay",
+        cfg.alerts.overlay,
+        "A large card in the middle of the screen.",
+        "A dimmed backdrop and centred card that is hard to miss.",
+    );
+    r.sub_check(
+        "\u{E769}",
+        ID_REQUIRE_DISMISS,
+        "Wait for dismiss — pauses the timer",
+        cfg.alerts.require_dismiss,
+        "Needs Centre overlay. Keeps the card open and pauses until Continue.",
+    );
+    r.check(
+        "\u{E706}",
+        ID_ALERT_FLASH,
+        "Screen flash",
+        cfg.alerts.flash,
+        "A colour pulse across every screen.",
+        "A colour pulse across every screen. Short is two quick pulses; Extra long is eight slower ones.",
+    );
+    r.combo(
+        "\u{E706}",
+        ID_FLASH_LENGTH,
+        "Flash length",
+        &["Short", "Normal", "Long", "Extra long"],
+        cfg.alerts.flash_length.index(),
+        "How long the screen flash runs.",
+        "Needs Screen flash. Short is two quick pulses; Extra long is eight slower ones.",
+    );
+
     r.header(PAGE_DND, "Muting");
     r.check(
         "\u{E708}",
@@ -1170,6 +1234,13 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "Do Not Disturb goes on with focus and off with a break.",
         "Switch Windows Do Not Disturb on when focus starts and off when a break starts.",
     );
+    r.sub_check(
+        "\u{E708}",
+        ID_DND_SHORT_BREAK,
+        "Keep it on during short breaks",
+        cfg.dnd.keep_on_short_break,
+        "Only a long break turns Do Not Disturb off. Needs muting during focus.",
+    );
     r.note(
         "Your priority apps and contacts still get through - Windows keeps \
          applying your own priority list, which this app never touches.",
@@ -1177,23 +1248,20 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
     );
 
     r.header(PAGE_DND, "Muted indicator");
-    r.check(
+    r.note("Only used while muting during focus is switched on.", 1);
+    r.sub_check(
         "\u{EA8F}",
         ID_MUTE_TRAY,
         "Add a separate bell beside the clock",
         cfg.dnd.mute_tray_icon,
-        "A second tray icon, present only while muted.",
-        "Windows 11 hides new icons behind the ^ arrow; drag it out once and it \
-         stays put.",
+        "A second tray icon, present only while muted. Needs muting during focus.",
     );
-    r.check(
+    r.sub_check(
         "\u{E7ED}",
         ID_MUTE_WINDOW,
         "Show a muted bell in the timer window",
         cfg.dnd.mute_window,
-        "Next to the countdown, if that window is switched on.",
-        "Draws the crossed-out bell next to the countdown in the compact timer \
-         window.",
+        "Next to the countdown. Needs muting during focus.",
     );
     r.note(
         "Windows only shows its own muted icon for changes made from the taskbar. \
@@ -1202,13 +1270,18 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         4,
     );
 
-    r.header(PAGE_SOUNDS, "Sound cues");
+    r.header(PAGE_SOUNDS, "Alert sounds");
+    r.note(
+        "Plays the Windows Asterisk sound from your scheme. Mute system sounds \
+         in Windows if you want silence.",
+        2,
+    );
     r.check(
         "\u{E74F}",
         ID_MUTE,
         "Mute all sounds",
         cfg.sounds.muted,
-        "Global mute, independent of the switches below.",
+        "When on, the switches below do nothing.",
         "Silences every cue without forgetting which ones you had chosen.",
     );
     r.sub_check(
@@ -1250,13 +1323,12 @@ unsafe fn build_rows(r: &mut Rows, st: &State, cfg: &Config) {
         "Drag its edges to shrink it to roughly the height of a taskbar button, \
          or make it large. Click it to start or pause.",
     );
-    r.check(
+    r.sub_check(
         "\u{E718}",
         ID_TOPMOST,
         "Keep it above other windows",
         cfg.display.always_on_top,
-        "Stays visible while you work in other applications.",
-        "Keep the compact timer window on top of everything else.",
+        "Needs the compact timer window. Stays visible over other apps.",
     );
     r.note(
         "The tray icon always stays visible; these are extra readouts.",
@@ -1408,8 +1480,9 @@ unsafe fn place(it: &Item, y: i32) -> (i32, Option<RECT>) {
         }
         Kind::Check => {
             let mut inner = y + CARD_Y;
-            show(it.hwnd, inner_x, inner, inner_w, 20);
-            inner += 20;
+            let row_h = it.ctl_h.max(20);
+            show(it.hwnd, inner_x, inner, inner_w, row_h);
+            inner += row_h;
             if !it.desc.is_invalid() {
                 show(it.desc, inner_x + 20, inner + 2, inner_w - 20, 16);
                 inner += 18;
@@ -1633,6 +1706,44 @@ unsafe fn text_of(parent: HWND, id: usize) -> String {
     String::from_utf16_lossy(&buf[..n as usize])
 }
 
+/// Enable or disable dependent controls so irrelevant options cannot be
+/// toggled while their parent switch is off.
+unsafe fn sync_dependencies(pane: HWND) {
+    let set_enabled = |id: usize, enabled: bool| {
+        if let Ok(control) = GetDlgItem(Some(pane), id as i32) {
+            let _ = EnableWindow(control, enabled);
+        }
+    };
+    let sequence = checked(pane, ID_SEQUENCE);
+    set_enabled(ID_AUTO_BREAK, sequence);
+    set_enabled(ID_AUTO_FOCUS, sequence);
+    set_enabled(ID_REPEAT_CYCLES, sequence);
+
+    let notifications = checked(pane, ID_NOTIFY);
+    for id in [ID_N_FS, ID_N_FE, ID_N_BS, ID_N_BE, ID_ALERT_TOAST] {
+        set_enabled(id, notifications);
+    }
+
+    set_enabled(ID_REQUIRE_DISMISS, checked(pane, ID_ALERT_OVERLAY));
+
+    let dnd = checked(pane, ID_DND);
+    set_enabled(ID_DND_SHORT_BREAK, dnd);
+    set_enabled(ID_MUTE_TRAY, dnd);
+    set_enabled(ID_MUTE_WINDOW, dnd);
+
+    let sounds_unmuted = !checked(pane, ID_MUTE);
+    for id in [ID_S_FS, ID_S_FE, ID_S_BS, ID_S_BE] {
+        set_enabled(id, sounds_unmuted);
+    }
+    set_enabled(ID_FLASH_LENGTH, checked(pane, ID_ALERT_FLASH));
+
+    set_enabled(ID_TOPMOST, checked(pane, ID_MINI));
+
+    let hotkeys = checked(pane, ID_HOTKEYS);
+    set_enabled(ID_HK_TOGGLE, hotkeys);
+    set_enabled(ID_HK_SKIP, hotkeys);
+}
+
 unsafe fn checked(parent: HWND, id: usize) -> bool {
     let h = GetDlgItem(Some(parent), id as i32).unwrap_or_default();
     !h.is_invalid() && SendMessageW(h, BM_GETCHECK, None, None).0 == BST_CHECKED.0 as isize
@@ -1710,9 +1821,11 @@ unsafe fn collect(st: &mut State, save_as_new: bool) -> Result<Config, &'static 
     cfg.presets = st.presets.clone();
     cfg.active_preset = edited.name;
 
-    cfg.behavior.sequence_enabled = checked(pane, ID_SEQUENCE);
-    cfg.behavior.auto_start_break = checked(pane, ID_AUTO_BREAK);
-    cfg.behavior.auto_start_focus = checked(pane, ID_AUTO_FOCUS);
+    let sequence = checked(pane, ID_SEQUENCE);
+    cfg.behavior.sequence_enabled = sequence;
+    cfg.behavior.auto_start_break = sequence && checked(pane, ID_AUTO_BREAK);
+    cfg.behavior.auto_start_focus = sequence && checked(pane, ID_AUTO_FOCUS);
+    cfg.behavior.repeat_cycles = sequence && checked(pane, ID_REPEAT_CYCLES);
     cfg.behavior.strict_focus = checked(pane, ID_STRICT);
     cfg.behavior.restore_session_on_restart = checked(pane, ID_RESTORE_SESSION);
     cfg.behavior.wake_policy = match combo_index(pane, ID_WAKE) {
@@ -1721,23 +1834,34 @@ unsafe fn collect(st: &mut State, save_as_new: bool) -> Result<Config, &'static 
         _ => WakePolicy::CountSleep,
     };
 
-    cfg.dnd.enabled = checked(pane, ID_DND);
-    cfg.dnd.mute_tray_icon = checked(pane, ID_MUTE_TRAY);
-    cfg.dnd.mute_window = checked(pane, ID_MUTE_WINDOW);
-    cfg.display.mini_window = checked(pane, ID_MINI);
-    cfg.display.always_on_top = checked(pane, ID_TOPMOST);
+    let dnd = checked(pane, ID_DND);
+    cfg.dnd.enabled = dnd;
+    cfg.dnd.keep_on_short_break = dnd && checked(pane, ID_DND_SHORT_BREAK);
+    cfg.dnd.mute_tray_icon = dnd && checked(pane, ID_MUTE_TRAY);
+    cfg.dnd.mute_window = dnd && checked(pane, ID_MUTE_WINDOW);
+    let mini = checked(pane, ID_MINI);
+    cfg.display.mini_window = mini;
+    cfg.display.always_on_top = mini && checked(pane, ID_TOPMOST);
 
-    cfg.notifications.enabled = checked(pane, ID_NOTIFY);
+    let notify = checked(pane, ID_NOTIFY);
+    cfg.notifications.enabled = notify;
     cfg.notifications.events.focus_start = checked(pane, ID_N_FS);
     cfg.notifications.events.focus_end = checked(pane, ID_N_FE);
     cfg.notifications.events.break_start = checked(pane, ID_N_BS);
     cfg.notifications.events.break_end = checked(pane, ID_N_BE);
+
+    let overlay = checked(pane, ID_ALERT_OVERLAY);
+    cfg.alerts.toast = notify && checked(pane, ID_ALERT_TOAST);
+    cfg.alerts.overlay = overlay;
+    cfg.alerts.flash = checked(pane, ID_ALERT_FLASH);
+    cfg.alerts.require_dismiss = overlay && checked(pane, ID_REQUIRE_DISMISS);
 
     cfg.sounds.muted = checked(pane, ID_MUTE);
     cfg.sounds.events.focus_start = checked(pane, ID_S_FS);
     cfg.sounds.events.focus_end = checked(pane, ID_S_FE);
     cfg.sounds.events.break_start = checked(pane, ID_S_BS);
     cfg.sounds.events.break_end = checked(pane, ID_S_BE);
+    cfg.alerts.flash_length = LengthPreset::from_index(combo_index(pane, ID_FLASH_LENGTH));
 
     cfg.hotkeys.enabled = checked(pane, ID_HOTKEYS);
     cfg.hotkeys.toggle = text_of(pane, ID_HK_TOGGLE).trim().to_string();
@@ -1790,9 +1914,11 @@ unsafe fn restore_defaults(st: &mut State) {
         (ID_SEQUENCE, d.behavior.sequence_enabled),
         (ID_AUTO_BREAK, d.behavior.auto_start_break),
         (ID_AUTO_FOCUS, d.behavior.auto_start_focus),
+        (ID_REPEAT_CYCLES, d.behavior.repeat_cycles),
         (ID_STRICT, d.behavior.strict_focus),
         (ID_RESTORE_SESSION, d.behavior.restore_session_on_restart),
         (ID_DND, d.dnd.enabled),
+        (ID_DND_SHORT_BREAK, d.dnd.keep_on_short_break),
         (ID_MUTE_TRAY, d.dnd.mute_tray_icon),
         (ID_MUTE_WINDOW, d.dnd.mute_window),
         (ID_MINI, d.display.mini_window),
@@ -1807,12 +1933,29 @@ unsafe fn restore_defaults(st: &mut State) {
         (ID_S_FE, d.sounds.events.focus_end),
         (ID_S_BS, d.sounds.events.break_start),
         (ID_S_BE, d.sounds.events.break_end),
+        (ID_ALERT_TOAST, d.alerts.toast),
+        (ID_ALERT_OVERLAY, d.alerts.overlay),
+        (ID_ALERT_FLASH, d.alerts.flash),
+        (ID_REQUIRE_DISMISS, d.alerts.require_dismiss),
         (ID_HOTKEYS, d.hotkeys.enabled),
     ] {
         set_checked(pane, id, v);
     }
     if let Ok(h) = GetDlgItem(Some(pane), ID_WAKE as i32) {
-        SendMessageW(h, CB_SETCURSEL, Some(WPARAM(0)), None);
+        let sel = match d.behavior.wake_policy {
+            WakePolicy::CountSleep => 0,
+            WakePolicy::IgnoreSleep => 1,
+            WakePolicy::Pause => 2,
+        };
+        SendMessageW(h, CB_SETCURSEL, Some(WPARAM(sel)), None);
+    }
+    if let Ok(h) = GetDlgItem(Some(pane), ID_FLASH_LENGTH as i32) {
+        SendMessageW(
+            h,
+            CB_SETCURSEL,
+            Some(WPARAM(d.alerts.flash_length.index())),
+            None,
+        );
     }
     for (id, v) in [
         (ID_HK_TOGGLE, d.hotkeys.toggle),
@@ -1998,7 +2141,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     st.current = combo_index(st.pane, ID_PRESET);
                     show_preset(st);
                 }
-                (ID_DEFAULTS, _) => restore_defaults(st),
+                (ID_DEFAULTS, _) => {
+                    restore_defaults(st);
+                    sync_dependencies(st.pane);
+                }
+                (
+                    ID_SEQUENCE | ID_NOTIFY | ID_ALERT_OVERLAY | ID_ALERT_FLASH | ID_DND | ID_MUTE
+                    | ID_MINI | ID_HOTKEYS | ID_S_FS | ID_S_FE | ID_S_BS | ID_S_BE,
+                    BN_CLICKED,
+                ) => sync_dependencies(st.pane),
                 (ID_SAVE, _) | (ID_SAVE_AS, _) => match collect(st, id == ID_SAVE_AS) {
                     Ok(cfg) => {
                         (*st.app).apply_config(cfg);

@@ -4,7 +4,9 @@
 //! [`crate::cli::Command`]s for the orchestrator, and renders whatever
 //! [`crate::orchestrator::UiEvent`]s come back.
 
+pub mod alert;
 pub mod app;
+pub mod confirm;
 pub mod hotkeys;
 pub mod icon;
 pub mod mini;
