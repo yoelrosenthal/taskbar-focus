@@ -13,7 +13,6 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::config::Alerts;
@@ -495,10 +494,6 @@ unsafe extern "system" fn overlay_wndproc(
         }
         WM_TIMER if wparam.0 == TIMER_DISMISS => {
             let _ = KillTimer(Some(hwnd), TIMER_DISMISS);
-            let _ = DestroyWindow(hwnd);
-            LRESULT(0)
-        }
-        WM_KEYDOWN if wparam.0 == VK_ESCAPE.0 as usize || wparam.0 == VK_RETURN.0 as usize => {
             let _ = DestroyWindow(hwnd);
             LRESULT(0)
         }

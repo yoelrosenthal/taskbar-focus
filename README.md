@@ -81,7 +81,7 @@ resumes the timer.
 
 ![Taskbar-Focus timer window showing a focus countdown](docs/images/timer-window.png)
 
-Turn it off in **Settings → Timer window**, or uncheck **Show timer window** in
+Turn it off in **Settings → Timer window**, or choose **Hide timer window** from
 the tray menu. Taskbar-Focus remembers its size and position. Use **Reset window
 size** to return to the default layout.
 
