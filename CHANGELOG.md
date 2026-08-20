@@ -10,6 +10,14 @@ request is merged into `main`; there is no need to edit them by hand.
 
 <!-- next-release -->
 
+## [0.4.1] - 2026-08-20
+
+### Changed
+
+- docs: rewrite the 0.4.0 changelog for readers
+
+**Full changelog**: https://github.com/yoelrosenthal/taskbar-focus/compare/v0.4.0...v0.4.1
+
 ## [0.4.0] - 2026-08-20
 
 ### Added
