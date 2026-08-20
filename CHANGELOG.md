@@ -14,19 +14,35 @@ request is merged into `main`; there is no need to edit them by hand.
 
 ### Added
 
-- session-end overlay, multi-monitor flash, and looping defaults
-
-### Fixed
-
-- place the overlay on the active monitor when the compact timer is hidden
-- place the overlay on the active monitor when the timer is hidden
-- drop dead overlay key handler and match tray toggle wording
-- keep DND through short-break toasts
-- keep DND through short-break toasts and preserve gated settings
+- A centre overlay when a focus or break ends, with an optional wait-for-dismiss
+  that pauses the timer until you continue.
+- A screen flash on every connected monitor, with a short / normal / long /
+  extra-long length.
+- Tray toast, overlay, and flash as independent options under
+  **Settings → Notifications**.
+- An option to start another cycle after a long break.
+- An option to keep Do Not Disturb on through short breaks, unmuting only on a
+  long break.
+- A dedicated Strict-focus confirmation instead of a system MessageBox.
 
 ### Changed
 
-- chore: ignore local agent instructions
+- New installs, and **Restore defaults**, loop the Pomodoro sequence, show the
+  compact timer, ignore time spent asleep, and do not restore a session on
+  restart. An existing `config.toml` is left as-is.
+- Completion cues use the Windows Asterisk sound, the same as session starts.
+- Overlay and flash colour follow the phase being entered: red for focus, green
+  for a break.
+
+### Fixed
+
+- Toasts no longer turn off Do Not Disturb during a short break when you asked
+  to keep it on.
+- Saving Settings no longer clears dependent checkboxes just because their
+  parent switch is off.
+- The overlay appears on the monitor you are using when the compact timer is
+  hidden.
+- Strict focus cannot open a second confirmation on top of the first.
 
 **Full changelog**: https://github.com/yoelrosenthal/taskbar-focus/compare/v0.3.4...v0.4.0
 
