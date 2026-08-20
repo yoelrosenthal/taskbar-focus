@@ -106,6 +106,8 @@ pub struct Plan {
     pub auto_start_break: bool,
     /// After a break ends, start the next focus session automatically.
     pub auto_start_focus: bool,
+    /// After a long break ends, start a new cycle even if `auto_start_focus` is off.
+    pub repeat_cycles: bool,
 }
 
 impl Plan {
@@ -362,7 +364,8 @@ impl Timer {
             return None;
         }
         if finished.is_break() {
-            plan.auto_start_focus.then_some(Phase::Focus)
+            (plan.auto_start_focus || (finished == Phase::LongBreak && plan.repeat_cycles))
+                .then_some(Phase::Focus)
         } else {
             plan.auto_start_break.then(|| self.break_after_focus(plan))
         }
@@ -382,6 +385,7 @@ mod tests {
             sequence_enabled: true,
             auto_start_break: true,
             auto_start_focus: false,
+            repeat_cycles: false,
         }
     }
 
@@ -448,6 +452,20 @@ mod tests {
                 assert_eq!(started, Phase::ShortBreak, "session {i} -> short break");
             }
         }
+    }
+
+    #[test]
+    fn long_break_repeat_cycles_starts_focus() {
+        let mut p = plan();
+        p.repeat_cycles = true;
+        let mut t = Timer::new();
+        t.update(Cmd::Start(Phase::LongBreak), &p);
+        let fx = t.update(Cmd::Tick(Duration::from_secs(40)), &p);
+        assert!(
+            fx.iter()
+                .any(|e| matches!(e, Effect::Started(Phase::Focus))),
+            "long break should start a new cycle"
+        );
     }
 
     #[test]

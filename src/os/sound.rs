@@ -1,26 +1,16 @@
-//! Sound cues.
+//! Windows scheme aliases for timer cues.
 //!
-//! We deliberately use the *system* sound aliases rather than shipping audio
-//! files: they respect the user's sound scheme, honour "mute system sounds",
-//! and cost nothing in binary size. `SND_NODEFAULT` means a user who has set an
-//! alias to "(None)" gets silence rather than the generic beep.
+//! `PlaySound` honours the user's sound scheme and "mute system sounds". There
+//! is no per-app volume for aliases, so loudness stays under Windows.
 
-use crate::orchestrator::Event;
-use crate::os::registry::wide;
 use windows::core::PCWSTR;
 use windows::Win32::Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT};
 
-fn alias_for(event: Event) -> &'static str {
-    match event {
-        Event::FocusStart | Event::BreakStart => "SystemAsterisk",
+use crate::os::registry::wide;
 
-        Event::FocusEnd | Event::BreakEnd => "SystemExclamation",
-    }
-}
-
-/// Play the cue for `event`. Never blocks and never fails loudly.
-pub fn play(event: Event) {
-    let w = wide(alias_for(event));
+/// Play the single timer cue. Never blocks the UI thread.
+pub fn play() {
+    let w = wide("SystemAsterisk");
     unsafe {
         let _ = PlaySoundW(
             PCWSTR(w.as_ptr()),

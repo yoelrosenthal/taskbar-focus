@@ -30,6 +30,12 @@ pub enum UiEvent {
     Notify { title: String, body: String },
     /// Play the sound associated with an event.
     Sound(Event),
+    /// Show the centre overlay and/or screen flash for a completed interval.
+    Alert {
+        title: String,
+        body: String,
+        event: Event,
+    },
     /// Tray icon / taskbar title / settings need repainting.
     Refresh,
     /// A warning worth showing the user (a DND change that did not stick).
@@ -106,6 +112,9 @@ impl Orchestrator {
             return "notifications muted";
         }
         match self.timer.state().phase() {
+            Some(Phase::LongBreak) if self.config.dnd.keep_on_short_break => {
+                "notifications on during long breaks"
+            }
             Some(p) if p.is_break() => "notifications on during breaks",
             Some(_) => "notifications not muted",
             None => "notifications on - nothing running",
@@ -276,13 +285,25 @@ impl Orchestrator {
     /// Replace settings and reconcile DND with the current timer phase.
     pub fn replace_config(&mut self, config: Config) {
         self.config = config;
-        if !self.should_engage_dnd() {
+        if self.should_engage_dnd() {
+            if !self.dnd_engage_requested && !self.dnd_release_pending {
+                self.dnd.engage();
+                self.dnd_engage_requested = true;
+            }
+        } else {
             self.request_dnd_release();
         }
     }
 
     fn should_engage_dnd(&self) -> bool {
-        self.config.dnd.enabled && self.timer.state().phase() == Some(Phase::Focus)
+        if !self.config.dnd.enabled {
+            return false;
+        }
+        match self.timer.state().phase() {
+            Some(Phase::Focus) => true,
+            Some(Phase::ShortBreak) => self.config.dnd.keep_on_short_break,
+            Some(Phase::LongBreak) | None => false,
+        }
     }
 
     /// Feed the state machine and turn its effects into OS actions.
@@ -361,20 +382,25 @@ impl Orchestrator {
     }
 
     /// Reconcile DND only after deciding which timer notifications will fire.
+    ///
+    /// Action Centre toasts cannot render while this app owns Do Not Disturb, so
+    /// they wait until a release. Overlay and flash are our own windows and stay
+    /// immediate. Release is only requested when the new phase should not stay
+    /// muted: `keep_on_short_break` must not drop DND just so a focus-end toast
+    /// can appear.
     fn reconcile_dnd(&mut self, out: &mut Vec<UiEvent>) {
-        let notifications_need_release = out
-            .iter()
-            .any(|event| matches!(event, UiEvent::Notify { .. }))
-            && (self.dnd_engage_requested || self.dnd_engaged || self.dnd_release_pending);
+        let has_toast = out.iter().any(defers_until_dnd_release);
+        let dnd_held = self.dnd_engage_requested || self.dnd_engaged || self.dnd_release_pending;
+        let keep_dnd = self.should_engage_dnd();
 
-        if notifications_need_release {
-            let (notifications, immediate) = out
-                .drain(..)
-                .partition(|event| matches!(event, UiEvent::Notify { .. }));
-            self.pending_notifications.extend(notifications);
+        if has_toast && dnd_held {
+            let (deferred, immediate) = out.drain(..).partition(defers_until_dnd_release);
+            self.pending_notifications.extend(deferred);
             *out = immediate;
-            self.request_dnd_release();
-        } else if !self.should_engage_dnd() {
+            if !keep_dnd {
+                self.request_dnd_release();
+            }
+        } else if !keep_dnd {
             self.request_dnd_release();
         }
     }
@@ -390,24 +416,28 @@ impl Orchestrator {
         self.dnd_release_pending = true;
     }
 
-    /// Queue a notification and/or sound, honouring the per-event toggles.
+    /// Queue a notification, sound and/or visual alert, honouring the toggles.
     fn emit(&self, out: &mut Vec<UiEvent>, event: Event, title: &str, body: &str) {
-        let n = &self.config.notifications;
-        let s = &self.config.sounds;
-        let enabled = |t: &crate::config::EventToggles| match event {
-            Event::FocusStart => t.focus_start,
-            Event::FocusEnd => t.focus_end,
-            Event::BreakStart => t.break_start,
-            Event::BreakEnd => t.break_end,
-        };
-        if n.enabled && enabled(&n.events) {
+        let notifications = &self.config.notifications;
+        let sounds = &self.config.sounds;
+        let alerts = &self.config.alerts;
+        let is_completion = is_completion(event);
+        let wants_toast = !is_completion || alerts.toast;
+        if notifications.enabled && event_enabled(event, &notifications.events) && wants_toast {
             out.push(UiEvent::Notify {
                 title: title.to_string(),
                 body: body.to_string(),
             });
         }
-        if !s.muted && enabled(&s.events) {
+        if !sounds.muted && event_enabled(event, &sounds.events) {
             out.push(UiEvent::Sound(event));
+        }
+        if is_completion && alerts.wants_visual() {
+            out.push(UiEvent::Alert {
+                title: title.to_string(),
+                body: body.to_string(),
+                event,
+            });
         }
     }
 
@@ -456,4 +486,24 @@ fn plural(n: u64) -> &'static str {
     } else {
         "s"
     }
+}
+
+fn event_enabled(event: Event, toggles: &crate::config::EventToggles) -> bool {
+    match event {
+        Event::FocusStart => toggles.focus_start,
+        Event::FocusEnd => toggles.focus_end,
+        Event::BreakStart => toggles.break_start,
+        Event::BreakEnd => toggles.break_end,
+    }
+}
+
+fn is_completion(event: Event) -> bool {
+    matches!(event, Event::FocusEnd | Event::BreakEnd)
+}
+
+/// Action Centre toasts that must wait until app-owned Do Not Disturb has
+/// released. Overlay and flash stay immediate: they are our own windows and
+/// remain visible while DND is on.
+fn defers_until_dnd_release(event: &UiEvent) -> bool {
+    matches!(event, UiEvent::Notify { .. })
 }

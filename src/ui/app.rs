@@ -6,6 +6,7 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::cli::Command;
@@ -102,6 +103,19 @@ pub struct App {
     /// The standalone muted mark beside the clock, shown only while muted.
     mute_tray: Tray,
     mute_icon: Option<OwnedIcon>,
+    /// Centre alert card, if one is showing.
+    alert_hwnd: Option<HWND>,
+    /// Short-lived per-monitor flash windows, if any are showing.
+    flash_hwnds: Vec<HWND>,
+    /// True when the dismiss-wait overlay paused a running timer.
+    alert_paused_timer: bool,
+    /// Bumped each time an alert is shown or dropped, so a delayed close
+    /// message from a destroyed HWND cannot resume a replacement card.
+    alert_generation: u32,
+    /// True while the strict-focus confirmation card is up. Commands, the
+    /// tray menu, settings, and the compact window must not change the
+    /// session until the user answers.
+    confirming: bool,
 }
 
 /// Entry point for the UI. Blocks until the user exits.
@@ -178,6 +192,11 @@ pub fn run(
             settings_hwnd: None,
             mute_tray: Tray::new(hwnd, MUTE_TRAY_ID, WM_TRAY),
             mute_icon: None,
+            alert_hwnd: None,
+            flash_hwnds: Vec::new(),
+            alert_paused_timer: false,
+            alert_generation: 0,
+            confirming: false,
         });
 
         app.register_hotkeys();
@@ -373,28 +392,140 @@ impl App {
 
     fn apply_events(&mut self, events: Vec<UiEvent>) {
         let mut notification_sent = false;
-        for e in events {
-            match e {
+        let mut visual_alerts = Vec::new();
+        for event in events {
+            match event {
                 UiEvent::Notify { title, body } => {
                     self.tray.notify(&title, &body);
                     notification_sent = true;
                 }
-                UiEvent::Sound(ev) => sound::play(ev),
+                UiEvent::Sound(_) => sound::play(),
+                UiEvent::Alert { title, body, event } => visual_alerts.push((title, body, event)),
                 UiEvent::Refresh => {}
-                UiEvent::Warn(msg) => {
-                    self.tray.notify("taskbar-focus", &msg);
+                UiEvent::Warn(message) => {
+                    self.tray.notify("taskbar-focus", &message);
                     notification_sent = true;
                 }
             }
+        }
+        for (title, body, event) in visual_alerts {
+            self.show_alert(&title, &body, event);
         }
         self.refresh();
         self.orch.ui_events_applied(notification_sent);
     }
 
+    /// Anchor visual alerts on the compact timer if shown, otherwise the
+    /// foreground window's monitor, else the main window.
+    fn alert_anchor(&self) -> HWND {
+        if let Some(mini) = self.mini_hwnd {
+            return mini;
+        }
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_invalid() {
+            self.hwnd
+        } else {
+            fg
+        }
+    }
+
+    fn show_alert(&mut self, title: &str, body: &str, event: crate::orchestrator::Event) {
+        let settings = self.orch.config.alerts.clone();
+        let anchor = self.alert_anchor();
+        self.alert_generation = self.alert_generation.wrapping_add(1);
+        let generation = self.alert_generation;
+        if settings.require_dismiss && settings.overlay {
+            self.pause_for_alert();
+        }
+        if settings.flash {
+            for old in self.flash_hwnds.drain(..) {
+                crate::ui::alert::close(old);
+            }
+            self.flash_hwnds = crate::ui::alert::show_flash(
+                self.hwnd,
+                anchor,
+                event,
+                generation,
+                settings.flash_length,
+            );
+        }
+        if settings.overlay {
+            if let Some(old) = self.alert_hwnd.take() {
+                crate::ui::alert::close(old);
+            }
+            self.alert_hwnd = crate::ui::alert::show_overlay(
+                self.hwnd, anchor, title, body, event, &settings, generation,
+            );
+            if settings.require_dismiss && self.alert_hwnd.is_none() {
+                self.resume_after_alert();
+            }
+        }
+    }
+
+    fn pause_for_alert(&mut self) {
+        if self.alert_paused_timer || !self.orch.timer.state().is_running() {
+            return;
+        }
+        self.alert_paused_timer = true;
+        let _ = self.orch.dispatch(&Command::Pause);
+        self.refresh();
+    }
+
+    fn resume_after_alert(&mut self) {
+        if !self.alert_paused_timer {
+            return;
+        }
+        self.alert_paused_timer = false;
+        let _ = self.orch.dispatch(&Command::Resume);
+        self.refresh();
+    }
+
+    /// Close overlay/flash without resuming: a user command will set the timer.
+    fn drop_alert(&mut self) {
+        if self.alert_hwnd.is_none() && self.flash_hwnds.is_empty() {
+            return;
+        }
+        self.alert_generation = self.alert_generation.wrapping_add(1);
+        if let Some(h) = self.alert_hwnd.take() {
+            crate::ui::alert::close(h);
+        }
+        for h in self.flash_hwnds.drain(..) {
+            crate::ui::alert::close(h);
+        }
+        self.alert_paused_timer = false;
+    }
+
+    /// Forget an overlay or flash HWND after it destroys itself.
+    pub fn alert_closed(&mut self, hwnd: HWND, generation: u32) {
+        if generation != self.alert_generation {
+            return;
+        }
+        if self.alert_hwnd == Some(hwnd) {
+            self.alert_hwnd = None;
+            self.resume_after_alert();
+        }
+        if let Some(i) = self.flash_hwnds.iter().position(|&h| h == hwnd) {
+            self.flash_hwnds.remove(i);
+        }
+    }
+
     /// Run a command, applying the "strict focus" guard where it applies.
     fn handle_command(&mut self, cmd: &Command) {
+        if self.confirming {
+            return;
+        }
         if self.needs_confirmation(cmd) && !self.confirm(cmd) {
             return;
+        }
+        if matches!(
+            cmd,
+            Command::Stop
+                | Command::Skip
+                | Command::StartFocus
+                | Command::StartBreak
+                | Command::Toggle
+        ) {
+            self.drop_alert();
         }
         let events = self.orch.dispatch(cmd);
         self.apply_events(events);
@@ -413,25 +544,49 @@ impl App {
             && self.orch.timer.state().phase() == Some(Phase::Focus)
     }
 
-    fn confirm(&self, cmd: &Command) -> bool {
-        let what = if matches!(cmd, Command::Stop) {
-            "Stop this focus session?"
+    fn confirm(&mut self, cmd: &Command) -> bool {
+        let (title, action) = if matches!(cmd, Command::Skip) {
+            ("Skip this focus session?", "Skip")
         } else {
-            "Skip the rest of this focus session?"
+            ("Stop this focus session?", "Stop")
         };
-        let text = wide(what);
-        let caption = wide("Strict focus");
+        let body = match self
+            .orch
+            .timer
+            .state()
+            .remaining()
+            .map(crate::orchestrator::human_duration)
+        {
+            Some(remaining) => {
+                format!("You still have {remaining} on the clock. A stray click shouldn't end it.")
+            }
+            None => "A stray click shouldn't end a running focus session.".into(),
+        };
+        self.confirming = true;
+        self.set_interactive(false);
+        let accepted = crate::ui::confirm::ask(self.hwnd, title, &body, action);
+        self.set_interactive(true);
+        self.confirming = false;
+        accepted
+    }
+
+    /// Disable the compact timer and settings so they cannot change the
+    /// session while [`Self::confirm`] is waiting for an answer.
+    fn set_interactive(&self, enabled: bool) {
         unsafe {
-            MessageBoxW(
-                Some(self.hwnd),
-                text.as_pcwstr(),
-                caption.as_pcwstr(),
-                MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND,
-            ) == IDYES
+            if let Some(h) = self.mini_hwnd {
+                let _ = EnableWindow(h, enabled);
+            }
+            if let Some(h) = self.settings_hwnd {
+                let _ = EnableWindow(h, enabled);
+            }
         }
     }
 
     pub fn show_menu(&mut self) {
+        if self.confirming {
+            return;
+        }
         unsafe {
             let Ok(menu) = CreatePopupMenu() else { return };
             let running = self.orch.timer.state().is_running();
@@ -565,6 +720,9 @@ impl App {
     }
 
     fn on_menu(&mut self, id: usize) {
+        if self.confirming {
+            return;
+        }
         match id {
             ID_TOGGLE => self.handle_command(&Command::Toggle),
             ID_START_FOCUS => self.handle_command(&Command::StartFocus),
@@ -593,6 +751,9 @@ impl App {
     }
 
     fn open_settings(&mut self) {
+        if self.confirming {
+            return;
+        }
         if let Some(h) = self.settings_hwnd {
             unsafe {
                 let _ = SetForegroundWindow(h);
@@ -676,6 +837,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_DND_REPORT => {
             let events = app.orch.collect_dnd_reports();
             app.apply_events(events);
+            LRESULT(0)
+        }
+
+        msg if msg == crate::ui::alert::WM_ALERT_CLOSED => {
+            app.alert_closed(HWND(wparam.0 as *mut std::ffi::c_void), lparam.0 as u32);
             LRESULT(0)
         }
 

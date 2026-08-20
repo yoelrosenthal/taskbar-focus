@@ -54,6 +54,9 @@ pub fn report() -> String {
             "DISABLED"
         }
     ));
+    if cfg.dnd.enabled && cfg.dnd.keep_on_short_break {
+        s.push_str("  Short breaks keep Do Not Disturb on; only a long break releases it.\n");
+    }
     if !cfg.dnd.enabled {
         s.push_str(
             "  With this disabled the program makes none of the registry writes\n  \
