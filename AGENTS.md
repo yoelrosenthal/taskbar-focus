@@ -54,9 +54,9 @@ it magnified. Designs reviewed at larger sizes have been misleading.
   this repository usable as a Scoop bucket - Scoop looks for manifests there, so
   the directory name is not arbitrary. Its `version` and `hash` are rewritten
   automatically by the release workflow; do not hand-edit them.
-- Deployment notes for any particular organisation, and anything about
-  signing the binary, live **outside this repository** and must not be
-  committed.
+- Deployment notes for any particular organisation, and signing procedures and
+  certificates, live **outside this repository** and must not be committed.
+  The user-facing note that releases are unsigned, in `SECURITY.md`, stays.
 - `CHANGELOG.md` is generated. Sections below the `<!-- next-release -->` marker
   are written by the release workflow; only the header above it is hand-edited.
 
@@ -86,9 +86,10 @@ How big the bump is comes from a label on the pull request:
 | `release:patch`  | `0.4.1` → `0.4.2`               |
 | `release:skip`   | merge without releasing         |
 
-With no label, `.github/scripts/suggest-bump.sh` reads the commits: a `!:`
-prefix or a `BREAKING CHANGE:` footer is major, `feat:` is minor, anything else
-is patch. That fallback exists so a merge is never blocked, not so the label can
+With no label, `.github/scripts/suggest-bump.sh` reads the commit subjects and
+bodies plus the pull request title: a `!:` prefix or a line starting
+`BREAKING CHANGE` (or `BREAKING-CHANGE`) is major, `feat:` is minor, anything
+else is patch. That fallback exists so a merge is never blocked, not so the label can
 be skipped - decide the label when opening the pull request.
 
 Conventional `feat:` and `fix:` prefixes also sort commits into the changelog's
@@ -100,7 +101,9 @@ release has to be re-cut - `release.yml` still accepts a pushed tag, and a
 
 ## Things not to break
 
-- Never commit signing material: `*.pfx`, `*.p12`, `*.key`, `*.pem`.
+- Never commit signing material: every pattern under the signing block in
+  `.gitignore` (`*.pfx`, `*.p12`, `*.pvk`, `*.spc`, `*.snk`, `*.key`, `*.pem`,
+  `*.cer`, `*.crt`).
 - The app must never require administrator rights.
 - No network access, no telemetry.
 - `os::dnd` touches undocumented Windows behaviour. Every change there must be
