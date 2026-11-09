@@ -2,12 +2,11 @@
 /dist
 **/*.rs.bk
 *.pdb
-CLAUDE.md
-AGENTS.md
+CLAUDE.local.md
 
 # Signing material - MUST NEVER be committed, especially to a public repo.
 # A leaked code-signing key lets anyone sign malware as you, and it cannot be
-# meaningfully revoked once published. See docs/SIGNING.md.
+# meaningfully revoked once published.
 *.pfx
 *.p12
 *.pvk
